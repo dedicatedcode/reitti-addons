@@ -10,6 +10,7 @@ An interactive web-based tool for creating and editing GPX tracks for testing lo
 - **Multiple Track Support**: Create and manage multiple tracks
 - **Paint Mode**: Draw continuous tracks by dragging
 - **Import/Export**: Load existing GPX files and export your creations
+- **Accuracy Filter**: Gray out points with poor GPS accuracy (0–200 m threshold) and redraw tracks between the remaining points
 - **Responsive Design**: Works on desktop and mobile devices
 
 ## Development
