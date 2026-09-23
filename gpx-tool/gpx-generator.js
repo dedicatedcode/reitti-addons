@@ -563,7 +563,9 @@ function updatePointsList() {
           speed = (calculateDistance(prev.lat,prev.lng,p.lat,p.lng)/1000) / ((p.timestamp-prev.timestamp)/3600000);
         }
         const speedColor = speed ? getSpeedColorCached(speed) : '#888';
-        html += `<div class="gpx-point" onclick="highlightPoint(${ti},${pi})">
+        const rowSelected = (pinnedPoint && pinnedPoint.trackIndex === ti && pinnedPoint.pointIndex === pi) ||
+          (window.selectedPoints && window.selectedPoints.has(`${ti}-${pi}`));
+        html += `<div class="gpx-point${rowSelected ? ' selected' : ''}" data-ti="${ti}" data-pi="${pi}" onclick="highlightPoint(${ti},${pi})">
           <span><span class="speed-color-dot" style="background:${speedColor}"></span>${p.lat.toFixed(4)}, ${p.lng.toFixed(4)}</span>
           <span class="time">${new Date(p.timestamp).toLocaleTimeString([],{hour:'2-digit',minute:'2-digit'})}</span>
         </div>`;
@@ -610,6 +612,23 @@ function highlightPoint(ti, pi) {
   if (!track || pi>=track.points.length) return;
   const p = track.points[pi];
   map.flyTo({ center: [p.lng, p.lat], zoom: 15 });
+  // keep the selection state in sync so the point is highlighted on the map
+  if (window.selectedPoints) {
+    window.selectedPoints.clear();
+    window.selectedPoints.add(typeof window.getPointId === 'function' ? window.getPointId(ti, pi) : ti + '-' + pi);
+  }
+  if (typeof window.updateSelectedPointsSource === 'function') window.updateSelectedPointsSource();
+  window.lastSelectedPoint = { trackIndex: ti, pointIndex: pi };
+  // pin the point and show/update the info popup
+  pinnedPoint = { trackIndex: ti, pointIndex: pi };
+  showPointInfoForPinned();
+  // mark the row as active in the list
+  const list = document.getElementById('pointsList');
+  if (list) {
+    list.querySelectorAll('.gpx-point.selected').forEach(el => el.classList.remove('selected'));
+    const row = list.querySelector(`.gpx-point[data-ti="${ti}"][data-pi="${pi}"]`);
+    if (row) row.classList.add('selected');
+  }
 }
 
 // ---- paint mode -----------------------------------------------------------
