@@ -18,6 +18,11 @@ let lastMouseLngLat = null;
 let stopProbability = 0.05;
 let speedColorCache = {};
 
+// minimum accuracy filter: null = unset (no filtering), otherwise a meter value.
+// Points with a numeric accuracy above the threshold are dimmed and the track
+// line is drawn between the remaining points only.
+let minAccuracyFilter = null;
+
 const MAX_INTERPOLATION_SEGMENTS = 40000;
 
 // persisted point selection (view mode)
@@ -77,7 +82,8 @@ function initMap() {
     map.addSource('points', { type: 'geojson', data: emptyFC() });
     map.addLayer({ id: 'points-circle', type: 'circle', source: 'points', paint: {
       'circle-radius': 4,
-      'circle-color': ['get','color'],
+      'circle-color': ['case', ['==', ['get','dimmed'], true], '#9aa0a6', ['get','color']],
+      'circle-opacity': ['case', ['==', ['get','dimmed'], true], 0.55, 1],
       'circle-stroke-width': 1.5,
       'circle-stroke-color': '#ffffff'
     }});
@@ -311,7 +317,15 @@ function showPointInfo(props) {
     <div class="sel-info-row"><span class="k">Time</span><span class="v">${new Date(props.timestamp).toLocaleString()}</span></div>
     <div class="sel-info-row"><span class="k">Speed</span><span class="v">${props.speed ? props.speed.toFixed(1)+' km/h' : '-'}</span></div>
     <div class="sel-info-row"><span class="k">Elev</span><span class="v">${props.elevation ? props.elevation.toFixed(1)+'m' : '-'}</span></div>
-    <div class="sel-info-row"><span class="k">Acc</span><span class="v">${typeof props.accuracy === 'number' ? props.accuracy.toFixed(1)+'m' : '-'}</span></div>
+    <div class="sel-info-row"><span class="k">Acc</span><span class="v">${typeof props.accuracy === 'number' ? props.accuracy.toFixed(1)+'m' : '-'}</span></div>`;
+
+  if (minAccuracyFilter !== null) {
+    const pass = pointPassesFilter({ accuracy: props.accuracy });
+    const accTxt = typeof props.accuracy === 'number' ? props.accuracy.toFixed(1)+'m' : 'no data';
+    html += `<div class="sel-info-row"><span class="k">Filter</span><span class="v" style="color:${pass ? '#2f7a4f' : '#c0533f'}">${pass ? 'included' : 'excluded'} (${accTxt} vs ≤ ${minAccuracyFilter}m)</span></div>`;
+  }
+
+  html += `
     <div class="sel-info-actions">
       <button class="btn btn-danger sel-info-btn" onclick="deletePointFromInfo(${props.trackIndex},${props.pointIndex})">Delete</button>
       <button class="btn sel-info-btn" onclick="centerOnPoint(${props.lat},${props.lng})">Center</button>
@@ -489,17 +503,58 @@ function createNewTrack(name, startTime, skipUpdate = false) {
 }
 function newTrack() { createNewTrack(); }
 
+// ---- accuracy filter ------------------------------------------------------
+function pointPassesFilter(p) {
+  if (minAccuracyFilter === null) return true;
+  // points without an accuracy value are never filtered
+  if (typeof p.accuracy !== 'number') return true;
+  return p.accuracy <= minAccuracyFilter;
+}
+
+function setMinAccuracyFilter(value) {
+  if (value === null || value === undefined || isNaN(value)) {
+    minAccuracyFilter = null;
+  } else {
+    minAccuracyFilter = Math.max(0, Math.min(200, Number(value)));
+  }
+  updateMinAccuracyUI();
+  updateAllLayers();
+  updatePointsList();
+}
+window.setMinAccuracyFilter = setMinAccuracyFilter;
+
+function updateMinAccuracyUI() {
+  const valueSpan = document.getElementById('minAccuracyValue');
+  if (valueSpan) {
+    valueSpan.textContent = minAccuracyFilter === null ? 'off' : '≤ ' + minAccuracyFilter + ' m';
+  }
+  const slider = document.getElementById('minAccuracyFilter');
+  if (slider) {
+    const pct = Math.round((parseInt(slider.value, 10) / 200) * 100);
+    slider.style.setProperty('--fill', pct + '%');
+  }
+}
+
+function updateAccuracyFilterVisibility() {
+  const control = document.getElementById('accuracyFilterControl');
+  if (!control) return;
+  const hasData = tracks.some(t => t.points.length > 0);
+  control.classList.toggle('is-visible', hasData);
+}
+
 // ---- layers update --------------------------------------------------------
 function updateAllLayers() {
   if (!map.getSource('tracks')) return;
-  // tracks line
+  // tracks line – when the filter is active the line connects only the
+  // remaining (passing) points, jumping across filtered-out ones
   const features = [];
   tracks.forEach(track => {
-    if (track.points.length<2) return;
+    const linePts = track.points.filter(pointPassesFilter);
+    if (linePts.length<2) return;
     features.push({
       type: 'Feature',
       properties: { color: track.color },
-      geometry: { type:'LineString', coordinates: track.points.map(p => [p.lng, p.lat]) }
+      geometry: { type:'LineString', coordinates: linePts.map(p => [p.lng, p.lat]) }
     });
   });
   map.getSource('tracks').setData({ type:'FeatureCollection', features });
@@ -523,7 +578,8 @@ function updateAllLayers() {
           timestamp: p.timestamp.toISOString(),
           speed,
           elevation: p.elevation,
-          accuracy: p.accuracy
+          accuracy: p.accuracy,
+          dimmed: !pointPassesFilter(p)
         },
         geometry: { type:'Point', coordinates: [p.lng, p.lat] }
       });
@@ -531,6 +587,7 @@ function updateAllLayers() {
   });
   map.getSource('points').setData({ type:'FeatureCollection', features: pts });
   map.getSource('preview').setData(emptyFC());
+  updateAccuracyFilterVisibility();
 }
 
 // ---- point list panel -----------------------------------------------------
@@ -562,8 +619,11 @@ function updatePointsList() {
           const prev = track.points[pi-1];
           speed = (calculateDistance(prev.lat,prev.lng,p.lat,p.lng)/1000) / ((p.timestamp-prev.timestamp)/3600000);
         }
-        const speedColor = speed ? getSpeedColorCached(speed) : '#888';
-        html += `<div class="gpx-point" onclick="highlightPoint(${ti},${pi})">
+        const passes = pointPassesFilter(p);
+        const speedColor = !passes ? '#9aa0a6' : (speed ? getSpeedColorCached(speed) : '#888');
+        const rowSelected = (pinnedPoint && pinnedPoint.trackIndex === ti && pinnedPoint.pointIndex === pi) ||
+          (window.selectedPoints && window.selectedPoints.has(`${ti}-${pi}`));
+        html += `<div class="gpx-point${rowSelected ? ' selected' : ''}${passes ? '' : ' filtered'}" data-ti="${ti}" data-pi="${pi}" onclick="highlightPoint(${ti},${pi})">
           <span><span class="speed-color-dot" style="background:${speedColor}"></span>${p.lat.toFixed(4)}, ${p.lng.toFixed(4)}</span>
           <span class="time">${new Date(p.timestamp).toLocaleTimeString([],{hour:'2-digit',minute:'2-digit'})}</span>
         </div>`;
@@ -610,6 +670,23 @@ function highlightPoint(ti, pi) {
   if (!track || pi>=track.points.length) return;
   const p = track.points[pi];
   map.flyTo({ center: [p.lng, p.lat], zoom: 15 });
+  // keep the selection state in sync so the point is highlighted on the map
+  if (window.selectedPoints) {
+    window.selectedPoints.clear();
+    window.selectedPoints.add(typeof window.getPointId === 'function' ? window.getPointId(ti, pi) : ti + '-' + pi);
+  }
+  if (typeof window.updateSelectedPointsSource === 'function') window.updateSelectedPointsSource();
+  window.lastSelectedPoint = { trackIndex: ti, pointIndex: pi };
+  // pin the point and show/update the info popup
+  pinnedPoint = { trackIndex: ti, pointIndex: pi };
+  showPointInfoForPinned();
+  // mark the row as active in the list
+  const list = document.getElementById('pointsList');
+  if (list) {
+    list.querySelectorAll('.gpx-point.selected').forEach(el => el.classList.remove('selected'));
+    const row = list.querySelector(`.gpx-point[data-ti="${ti}"][data-pi="${pi}"]`);
+    if (row) row.classList.add('selected');
+  }
 }
 
 // ---- paint mode -----------------------------------------------------------
@@ -1007,6 +1084,29 @@ function initControls() {
   document.getElementById('accuracySlider').addEventListener('input', function() {
     document.getElementById('accuracyValue').textContent = this.value;
   });
+  const minAccSlider = document.getElementById('minAccuracyFilter');
+  if (minAccSlider) {
+    let pendingValue = null;
+    let rafId = null;
+    minAccSlider.addEventListener('input', function() {
+      pendingValue = parseInt(this.value, 10);
+      if (rafId === null) {
+        rafId = requestAnimationFrame(() => {
+          rafId = null;
+          if (pendingValue !== null) setMinAccuracyFilter(pendingValue);
+          pendingValue = null;
+        });
+      }
+    });
+  }
+  const minAccOff = document.getElementById('btnAccuracyFilterOff');
+  if (minAccOff) {
+    minAccOff.addEventListener('click', function() {
+      setMinAccuracyFilter(null);
+    });
+  }
+  updateAccuracyFilterVisibility();
+  updateMinAccuracyUI();
 }
 
 // About modal functions

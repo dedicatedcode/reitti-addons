@@ -152,6 +152,7 @@
     .gpx-track-header .track-color { width: 12px; height: 12px; border-radius: 50%; margin-right: 8px; display: inline-block; vertical-align: middle; }
     .gpx-point { padding: 4px 12px 4px 28px; font-size: 11px; border-bottom: 1px solid rgba(255,255,255,0.03); cursor: pointer; display: flex; justify-content: space-between; }
     .gpx-point:hover { background: rgba(255,255,255,0.04); }
+    .gpx-point.selected { background: rgba(242,196,112,0.18); }
     .gpx-point .coords { color: var(--ink-dim); }
     .gpx-point .time { color: var(--color-text-white); min-width: 70px; text-align: right; }
     .speed-color-dot { display:inline-block; width:8px; height:8px; border-radius:2px; margin-right:4px; }
@@ -336,6 +337,72 @@
       padding-top: 6px;
       border-top: 1px solid rgba(0,0,0,0.12);
     }
+
+    /* accuracy filter control in the header (only visible when track data is loaded) */
+    .accuracy-filter {
+      display: none;
+      align-items: center;
+      gap: 8px;
+      padding: 0 10px;
+      flex-shrink: 0;
+      white-space: nowrap;
+    }
+    .accuracy-filter.is-visible {
+      display: flex;
+    }
+    .accuracy-filter-label {
+      font-size: 12px;
+      color: var(--ink-dim, #ccc);
+    }
+    .accuracy-filter-value {
+      display: inline-block;
+      min-width: 56px;
+      font-size: 12px;
+      color: var(--color-highlight, #F5DEB3);
+      font-weight: 600;
+    }
+    .accuracy-filter input[type="range"] {
+      -webkit-appearance: none;
+      appearance: none;
+      width: 100px;
+      height: 4px;
+      margin: 0;
+      border: none;
+      border-radius: 999px;
+      background: linear-gradient(to right,
+        var(--color-highlight, #F5DEB3) var(--fill, 0%),
+        rgba(255, 255, 255, 0.18) var(--fill, 0%));
+      outline: none;
+      cursor: pointer;
+    }
+    .accuracy-filter input[type="range"]::-webkit-slider-thumb {
+      -webkit-appearance: none;
+      appearance: none;
+      width: 13px;
+      height: 13px;
+      border-radius: 50%;
+      background: var(--color-highlight, #F5DEB3);
+      border: 2px solid rgba(0, 0, 0, 0.35);
+      box-shadow: 0 1px 3px rgba(0, 0, 0, 0.4);
+      cursor: pointer;
+    }
+    .accuracy-filter input[type="range"]::-moz-range-thumb {
+      width: 13px;
+      height: 13px;
+      border-radius: 50%;
+      background: var(--color-highlight, #F5DEB3);
+      border: 2px solid rgba(0, 0, 0, 0.35);
+      box-shadow: 0 1px 3px rgba(0, 0, 0, 0.4);
+      cursor: pointer;
+    }
+
+    /* filtered (grayed-out) rows in the points list */
+    .gpx-point.filtered,
+    .gpx-point.filtered .time,
+    .gpx-point.filtered .coords {
+      color: var(--ink-faint, #888);
+      opacity: 0.55;
+    }
   </style>
 </head>
 <body style="background: var(--bg); color: var(--ink);">
@@ -356,6 +423,12 @@
     <button class="head-btn" onclick="exportAll()">💾 Export</button>
     <button class="head-btn" onclick="clearAll()" style="color:#e07a6b">🗑 Clear</button>
     <button class="head-btn" onclick="randomizeAll()">🎲 Randomize</button>
+    <div class="accuracy-filter" id="accuracyFilterControl" title="Gray out track points whose GPS accuracy (error radius) is worse than the selected value and redraw the track between the remaining points.">
+      <span class="accuracy-filter-label">Accuracy</span>
+      <input type="range" id="minAccuracyFilter" min="0" max="200" step="5" value="0">
+      <span class="accuracy-filter-value" id="minAccuracyValue">off</span>
+      <button class="head-btn" id="btnAccuracyFilterOff" title="Reset accuracy filter"><i class="lni lni-refresh-circle-1-clockwise"></i> Reset</button>
+    </div>
     <button class="head-btn" onclick="toggleHelp()" style="margin-left:auto;">❓ Help</button>
     <button class="head-btn" onclick="showAbout()">About</button>
   </div>
@@ -541,6 +614,15 @@
         When paint mode is active all other tools (Select, Box Select, Add Point) are turned off.
         New points are created with the same timestamp interval, GPS accuracy, elevation and
         realistic‑stop behaviour that you have configured in the Settings drawer.
+      </p>
+
+      <h4>Accuracy Filter</h4>
+      <p>
+        The <strong>Accuracy ≤</strong> control in the toolbar (shown once track data is loaded,
+        0–200&nbsp;m) grays out track points whose GPS accuracy (error radius in meters) is worse
+        than the selected value. The track line is then drawn between the remaining points only.
+        Click <em>Reset</em> to disable the filter completely. Points without an accuracy value are
+        never filtered.
       </p>
     </div>
   </div>
