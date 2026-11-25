@@ -50,7 +50,7 @@ tag, so avoid pre-release tags such as `1.2.3-rc1` unless you change that rule.
    git tag overlay-extension-v1.2.3
    git push origin overlay-extension-v1.2.3
    ```
-4. The workflow checks that the tag matches the version file and publishes `1.2.3`, `1.2`, and
+4. The workflow checks that the tag matches the version file and publishes `1.2.3`, `1.2`, `1`, and
    `latest` to Docker Hub and GHCR.
 
 A manual build can be started from **Actions → Overlay extension image / GTFS-RT extension image /

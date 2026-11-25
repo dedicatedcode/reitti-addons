@@ -36,9 +36,9 @@ Each add-on is versioned and published independently to Docker Hub and GitHub Co
 | GTFS-RT extension | `dedicatedcode/reitti-gtfs-rt-extension` | `ghcr.io/dedicatedcode/reitti-gtfs-rt-extension` |
 | GPX tool | `dedicatedcode/reitti-gpx-generator` | `ghcr.io/dedicatedcode/reitti-gpx-generator` |
 
-`develop` follows `main`. Release tags look like `overlay-extension-v1.2.3` and publish `1.2.3`,
-`1.2`, and `latest` on both registries. A change in one add-on only rebuilds that add-on. See
-[RELEASING.md](RELEASING.md) for the version files, tag names, and release process.
+`develop` follows `main`. Release tags look like `overlay-extension-v1.2.3` and publish `1.2.3`, `1.2`, `1`, and
+`latest` on both registries, so `:1` tracks the latest compatible 1.x release. A change in one add-on only rebuilds that
+add-on. See [RELEASING.md](RELEASING.md) for the version files, tag names, and release process.
 
 ---
 
@@ -69,7 +69,7 @@ It is a handy companion for reitti: use it to generate or modify test data and i
 features, fill a dev environment with plausible movement, or demo timelines. Run it with:
 
 ```bash
-docker run -p 8080:80 dedicatedcode/reitti-gpx-generator
+docker run -p 8080:80 dedicatedcode/reitti-gpx-generator:1
 ```
 
 Then open http://localhost:8080 in your browser. All processing happens locally; no track data is ever sent to any
@@ -91,9 +91,8 @@ a mounted directory.
 Run it with:
 
 ```bash
-docker build -t reitti-overlay-extension overlay-extension
 docker run -d -p 8090:8090 -v overlay-data:/app/data \
-  -e DEFAULT_TIMEZONE=Europe/Berlin reitti-overlay-extension
+  -e DEFAULT_TIMEZONE=Europe/Berlin dedicatedcode/reitti-overlay-extension:1
 ```
 
 Then register `http://overlay-extension:8090` in Reitti's map extension settings. Use the container
@@ -102,6 +101,36 @@ name Reitti can resolve, then enable **Overlays** once in the map's extension la
 > **Details:** Docker, Compose, bare-metal, the validity model and the per-feature colour contract
 > in [overlay-extension/README.md](overlay-extension/README.md). For building a new extension, see
 > the [Reitti extension authoring guide for LLMs](https://github.com/dedicatedcode/reitti-documentation/blob/main/llm.txt).
+
+---
+
+## Transit positions extension (GTFS-RT)
+
+A standalone service that supplies bus, tram and train positions to Reitti as an HTTP polling extension. It combines
+the public GTFS.de TripUpdates feed with the static GTFS.de schedule to infer **nationwide schedule-based positions for
+all of Germany**, and adds **actual live vehicle positions** on demand in Berlin (VBB `transport.rest`) and Münster
+(Busradar). Everything is served through one manifest with two toggleable layers: neutral 3D vehicle models, or the same
+models painted in their line colours.
+
+> **Coverage:** the extension is Germany-only. Within Germany it covers the whole country, using actual live positions
+> where available (currently Berlin and Münster) and schedule-based estimates everywhere else. There are no feeds for
+> other countries; if you need those, fork or write your own version of the extension — see
+> [gtfs-rt-extension/README.md](gtfs-rt-extension/README.md).
+
+Run it with:
+
+```bash
+docker run -d --name reitti-gtfs-rt-extension -p 8090:8090 \
+  -v gtfs-rt-cache:/app/data/gtfs-static dedicatedcode/reitti-gtfs-rt-extension:1
+```
+
+Then register `http://gtfs-rt-extension:8090/reitti-extension.json` in Reitti's map extension settings and allow the
+container name in `REITTI_EXTENSIONS_ALLOWED_HOSTS`. The first start downloads a roughly 300 MB GTFS.de archive, and
+the Germany profile needs about 2–3 GB of RAM; mount the cache volume so restarts skip the download. Outside the live
+city feeds, positions are estimated from schedules and predictions rather than measured by GPS.
+
+> **Details:** configuration, Docker Compose setup, regional shape feeds and cache notes in
+> [gtfs-rt-extension/README.md](gtfs-rt-extension/README.md).
 
 ---
 

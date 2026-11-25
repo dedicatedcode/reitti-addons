@@ -6,10 +6,14 @@ extension. It needs no Reitti source code, database, or internal API.
 The included **Germany** configuration combines:
 
 - **Nationwide estimates** from the public GTFS.de TripUpdates feed and static schedule, and
-- **Live vehicle positions** in Berlin (VBB `transport.rest`) and Münster (Busradar), activated on demand.
+- **Live, actual vehicle positions** in Berlin (VBB `transport.rest`) and Münster (Busradar), activated on demand.
 
 All of it is exposed through one extension manifest and one `/vehicles` endpoint. Estimated and live vehicles use the
 same payload format, so Reitti needs to know nothing about the individual upstream feeds.
+
+> **Coverage:** the Germany profile covers the whole country. Live feeds are used where available; everywhere else,
+> positions are estimated from GTFS.de schedules and predictions, not measured by GPS. The extension does not cover
+> other countries — see [Other countries](#other-countries).
 
 ## What Reitti gets
 
@@ -205,8 +209,8 @@ modes.
   feed is starting or failing, estimates remain visible instead of leaving the city empty.
 - Static indexing is restricted to trips present in the current realtime feed, not every German trip.
 - GTFS.de's free archive has no `shapes.txt`, so ordered stop geometry is used as a straight-line fallback between
-  stops. Estimated positions are **predictions, not measured GPS**. Live city vehicles do not use estimates once their
-  feed is active.
+  stops. Estimated positions are **predictions, not measured GPS**; live city vehicles report actual positions and do
+  not fall back to estimates once their feed is active.
 - The realtime feed is polled every 15 seconds using `ETag` / `Last-Modified` conditional requests, so an unchanged
   feed costs only headers. The all-Germany estimate processes around 20k vehicles per cycle; narrowing `BBOX` to the
   region you actually view reduces CPU and improves update latency.
@@ -269,6 +273,18 @@ last error. Regional failures do not make the national feed unhealthy; unmatched
 
 Regional route data is attributed in the region registry and remains under the source feed's license. The default
 NAH.SH data is published under CC BY 4.0 by NAH.SH.
+
+## Other countries
+
+This repository ships a Germany profile only. The generic `gtfs-rt` and `gtfs-rt-estimated` feed types are not tied to
+GTFS.de — point `GTFS_RT_URL` and `GTFS_STATIC_URL` at another country's feeds as a starting point, and replace the
+Berlin/Münster live adapters and the region registry with sources for that country.
+
+For dependable coverage elsewhere, write your own version of this extension: fork this one and adapt it, or build a new
+service against the Reitti extension contract. The manifest and `/vehicles` payload are not Germany-specific, and the
+[Reitti extension authoring guide](https://github.com/dedicatedcode/reitti-documentation/blob/main/llm.txt) describes
+the interface. Contributions that add other countries are welcome — open an issue or pull request in
+[reitti-addons](https://github.com/dedicatedcode/reitti-addons).
 
 ## Endpoints
 
