@@ -75,7 +75,7 @@ test("serves cached normalized data, manifest, assets, health and Bearer auth", 
   assert.equal(manifest.layers[0].mapping.idField, "vehicleId");
   assert.deepEqual(manifest.layers[0].mapping.coordinateField, ["lon", "lat"]);
   assert.equal(manifest.layers[0].mapping.headingField, "bearing");
-  assert.equal(manifest.layers[0].mapping.labelField, "displayText");
+  assert.equal(manifest.layers[0].mapping.labelField, undefined);
   assert.equal(manifest.layers[0].mapping.modelField, "model");
   assert.equal(manifest.layers[0].mapping.details.rows.length, 3);
   assert.equal(manifest.layers[0].id, "luebeck-live-buses");

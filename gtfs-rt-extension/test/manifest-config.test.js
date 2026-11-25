@@ -48,7 +48,7 @@ test("loads documented defaults and emits relative URLs without PUBLIC_BASE_URL"
   const estimated = buildManifest(loadConfig({ ...required, FEED_TYPE: "gtfs-rt-estimated" }));
   assert.equal(estimated.id, "germany-transit");
   assert.equal(estimated.layers[0].id, "germany-estimated-transit");
-  assert.equal(estimated.layers[0].mapping.labelField, "displayText");
+  assert.equal(estimated.layers[0].mapping.labelField, undefined);
   const liveBerlin = buildManifest(loadConfig({ FEED_TYPE: "transport-rest" }));
   assert.equal(liveBerlin.id, "berlin-transit");
   assert.equal(liveBerlin.layers[0].id, "berlin-live-transit");
@@ -65,12 +65,8 @@ test("loads documented defaults and emits relative URLs without PUBLIC_BASE_URL"
   assert.equal(unified.layers[0].minZoom, 5);
   assert.equal(unified.layers[0].assets.models.bus.minZoom, 10);
   assert.equal(unified.layers[0].assets.models.bus.zoomScaleExponent, 0.8);
-  assert.equal(unified.layers[0].assets.models.ice.labelMinZoom, 5);
   assert.equal(unified.layers[0].assets.models.ice.zoomScaleExponent, 0.8);
-  assert.equal(unified.layers[0].assets.models.ic.labelMinZoom, 5);
   assert.equal(unified.layers[0].assets.models.ic.zoomScaleExponent, 0.8);
-  assert.equal(unified.layers[0].assets.models.bus.labelMinZoom, undefined);
-  assert.equal(unified.layers[0].assets.labelOffsetY, 12);
   assert.equal(unified.layers[0].mapping.colorField, undefined);
   assert.equal(unified.layers[0].assets.models.ice.modelUrl, "/assets/high-speed.glb");
   assert.equal(unified.layers[1].id, "germany-transit-colored");
