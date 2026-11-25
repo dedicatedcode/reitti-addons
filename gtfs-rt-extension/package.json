@@ -1,0 +1,23 @@
+{
+  "name": "reitti-gtfs-rt-extension",
+  "version": "1.0.0",
+  "description": "Standalone GTFS-RT vehicle-position extension for Reitti",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "start": "node src/server.js",
+    "test": "node --test test/*.test.js"
+  },
+  "dependencies": {
+    "csv-parse": "^7.0.3",
+    "gtfs-realtime-bindings": "^2.1.0",
+    "luxon": "^3.7.2",
+    "yauzl": "^3.2.0"
+  },
+  "devDependencies": {
+    "fflate": "^0.8.2"
+  }
+}

@@ -1,0 +1,17 @@
+{
+  "name": "reitti-overlay-extension",
+  "version": "1.0.0",
+  "description": "Time-windowed GPX/GeoJSON overlays for Reitti",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "start": "node src/server.js",
+    "test": "node --test test/*.test.js"
+  },
+  "dependencies": {
+    "fast-xml-parser": "^5.12.1"
+  }
+}

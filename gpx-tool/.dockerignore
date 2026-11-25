@@ -1,5 +1,7 @@
 .git
 .gitignore
+.github
+VERSION
 README.md
 Dockerfile
 .dockerignore

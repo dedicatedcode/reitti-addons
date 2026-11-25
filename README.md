@@ -7,8 +7,8 @@
 
 **reitti-addons** is a collection of tools that enhance or help with the usage of reitti. They live in this separate
 repository instead of the main one. They either have **no release process of their own** (like the plain bash
-scripts in *device-sync*) or are **not tied into any specific version of reitti** (like the standalone web tool in
-*gpx-tool*).
+scripts in *device-sync*) or are **released independently of reitti** (like the GPX tool and the two extension
+services).
 
 Each tool works against a running reitti instance or produces data for it. Nothing here is required to run reitti
 itself.
@@ -21,6 +21,24 @@ itself.
 |-----------------------------------------------|--------------------------------------------------------------|-------------------------------------------------------------------------------|-------------------------------------------------------------|
 | [reitti-device-sync](device-sync/)            | Auto-uploads new GPX/FIT files from USB-attached GPS devices | Pushes recordings to reitti's import API using device-bound tokens            | [device-sync/README.md](device-sync/README.md)              |
 | [GPX Test Data Generator](gpx-tool/)          | Interactive web tool for creating, importing, editing and randomizing realistic GPX tracks | Generates test data to import into reitti                                     | [gpx-tool/README.md](gpx-tool/README.md)                    |
+| [Transit positions extension](gtfs-rt-extension/) | Live and schedule-estimated buses/trains with 3D models and vehicle details | Provides GTFS-RT, GTFS.de estimation feeds through a Reitti extension manifest | [gtfs-rt-extension/README.md](gtfs-rt-extension/README.md) |
+| [Overlay extension](overlay-extension/) | Time-windowed GPX/GeoJSON overlays with per-track colours and a map editor | Provides one stable Reitti map layer whose data endpoint filters stored overlays by viewport and validity | [overlay-extension/README.md](overlay-extension/README.md) |
+
+---
+
+## Container images
+
+Each add-on is versioned and published independently to Docker Hub and GitHub Container Registry:
+
+| Add-on | Docker Hub | GHCR |
+|---|---|---|
+| Overlay extension | `dedicatedcode/reitti-overlay-extension` | `ghcr.io/dedicatedcode/reitti-overlay-extension` |
+| GTFS-RT extension | `dedicatedcode/reitti-gtfs-rt-extension` | `ghcr.io/dedicatedcode/reitti-gtfs-rt-extension` |
+| GPX tool | `dedicatedcode/reitti-gpx-generator` | `ghcr.io/dedicatedcode/reitti-gpx-generator` |
+
+`develop` follows `main`. Release tags look like `overlay-extension-v1.2.3` and publish `1.2.3`,
+`1.2`, and `latest` on both registries. A change in one add-on only rebuilds that add-on. See
+[RELEASING.md](RELEASING.md) for the version files, tag names, and release process.
 
 ---
 
@@ -58,6 +76,32 @@ Then open http://localhost:8080 in your browser. All processing happens locally;
 server.
 
 > **Details:** features, alternative ways to run it and use cases in [gpx-tool/README.md](gpx-tool/README.md).
+
+---
+
+## Overlay extension
+
+A standalone service that stores GPX and GeoJSON files with validity windows and serves them to
+Reitti as one stable map layer. Import an event plan, festival layout or race course, give it an
+absolute date/time range or a recurring daily window, and it appears on the map only while valid.
+Each overlay keeps its own colour, width and IANA time zone. The included editor has a MapLibre
+preview, bbox-aware data filtering, import/export and no database: overlays are plain JSON files in
+a mounted directory.
+
+Run it with:
+
+```bash
+docker build -t reitti-overlay-extension overlay-extension
+docker run -d -p 8090:8090 -v overlay-data:/app/data \
+  -e DEFAULT_TIMEZONE=Europe/Berlin reitti-overlay-extension
+```
+
+Then register `http://overlay-extension:8090` in Reitti's map extension settings. Use the container
+name Reitti can resolve, then enable **Overlays** once in the map's extension layer control.
+
+> **Details:** Docker, Compose, bare-metal, the validity model and the per-feature colour contract
+> in [overlay-extension/README.md](overlay-extension/README.md). For building a new extension, see
+> the [Reitti extension authoring guide for LLMs](https://github.com/dedicatedcode/reitti-documentation/blob/main/llm.txt).
 
 ---
 
