@@ -23,6 +23,10 @@ let speedColorCache = {};
 // line is drawn between the remaining points only.
 let minAccuracyFilter = null;
 
+// IANA timezone used to display GPS point times (list rows, point info panel
+// and day grouping on import). Always initialised to the browser's zone.
+let displayTimezone = Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC';
+
 const MAX_INTERPOLATION_SEGMENTS = 40000;
 
 // persisted point selection (view mode)
@@ -45,6 +49,204 @@ let tracksSource, pointsSource, previewSource;
 // --- helpers ---------------------------------------------------------------
 function pad2(n) { return n.toString().padStart(2,'0'); }
 
+// ---- display timezone ------------------------------------------------------
+const TZ_FALLBACK_ZONES = [
+  'UTC',
+  'Africa/Cairo','Africa/Johannesburg','Africa/Lagos',
+  'America/Bogota','America/Chicago','America/Denver','America/Los_Angeles',
+  'America/Mexico_City','America/New_York','America/Sao_Paulo','America/Toronto',
+  'Asia/Dubai','Asia/Hong_Kong','Asia/Jerusalem','Asia/Kolkata','Asia/Singapore','Asia/Tokyo',
+  'Australia/Sydney','Pacific/Auckland','Pacific/Honolulu',
+  'Europe/Amsterdam','Europe/Berlin','Europe/Helsinki','Europe/London','Europe/Madrid','Europe/Paris','Europe/Stockholm'
+];
+// lazily built Intl formatters, rebuilt whenever displayTimezone changes
+let tzFmtCache = {};
+function tzFmt(key, locale, opts) {
+  let entry = tzFmtCache[key];
+  if (!entry || entry.tz !== displayTimezone) {
+    entry = { tz: displayTimezone, fmt: new Intl.DateTimeFormat(locale, Object.assign({ timeZone: displayTimezone }, opts)) };
+    tzFmtCache[key] = entry;
+  }
+  return entry.fmt;
+}
+// "HH:MM:SS" (24h) for the points table
+function formatTimeSecInDisplayTz(ts) {
+  return tzFmt('timesec', [], { hour: '2-digit', minute: '2-digit', second: '2-digit', hourCycle: 'h23' }).format(ts);
+}
+// "12 m" / "1.25 km" for the diff column
+function formatDistShort(m) {
+  return m < 1000 ? m.toFixed(0) + ' m' : (m / 1000).toFixed(2) + ' km';
+}
+// "45 s" / "12 min" / "1.5 h" for the time delta to the next point
+function formatDtShort(sec) {
+  if (sec < 60) return sec.toFixed(0) + ' s';
+  if (sec < 3600) return Math.floor(sec / 60) + ' min';
+  return (sec / 3600).toFixed(1) + ' h';
+}
+// colour code for the time delta to the next point:
+// < 15 s green, < 30 s orange, otherwise red
+function dtThresholdColor(sec) {
+  if (sec < 15) return '#48bb78';
+  if (sec < 30) return '#fbb040';
+  return '#e53e3e';
+}
+// OpenStreetMap link pointing at a coordinate (with marker)
+function osmLinkFor(lat, lng) {
+  const la = lat.toFixed(5), lo = lng.toFixed(5);
+  return `https://www.openstreetmap.org/?mlat=${la}&mlon=${lo}#map=17/${la}/${lo}`;
+}
+// copy the OpenStreetMap link of a point to the clipboard (button feedback)
+function copyOsmLink(ev, lat, lng) {
+  ev.stopPropagation();
+  const url = osmLinkFor(lat, lng);
+  const btn = ev.currentTarget || ev.target;
+  const orig = btn.textContent;
+  const ok = () => {
+    btn.textContent = '✓';
+    setTimeout(() => { btn.textContent = orig; }, 900);
+  };
+  if (navigator.clipboard && navigator.clipboard.writeText) {
+    navigator.clipboard.writeText(url).then(ok).catch(() => copyViaTextarea(url, ok));
+  } else {
+    copyViaTextarea(url, ok);
+  }
+}
+function copyViaTextarea(text, ok) {
+  const ta = document.createElement('textarea');
+  ta.value = text;
+  ta.style.position = 'fixed';
+  ta.style.opacity = '0';
+  document.body.appendChild(ta);
+  ta.select();
+  try { if (document.execCommand('copy')) ok(); } catch (e) {}
+  document.body.removeChild(ta);
+}
+// full date + time for the point info panel
+function formatDateTimeInDisplayTz(ts) {
+  return tzFmt('datetime', [], { dateStyle: 'medium', timeStyle: 'medium' }).format(ts);
+}
+// "YYYY-MM-DD" calendar date in the display timezone (en-CA yields ISO-like output)
+function dateStrInDisplayTz(ts) {
+  return tzFmt('date', 'en-CA', { year: 'numeric', month: '2-digit', day: '2-digit' }).format(ts);
+}
+
+function populateTimezoneSelect() {
+  const select = document.getElementById('timezoneSelect');
+  if (!select) return;
+  let zones;
+  try {
+    zones = Intl.supportedValuesOf ? Intl.supportedValuesOf('timeZone').slice() : TZ_FALLBACK_ZONES.slice();
+  } catch (e) {
+    zones = TZ_FALLBACK_ZONES.slice();
+  }
+  if (!zones.includes('UTC')) zones.push('UTC');
+  if (!zones.includes(displayTimezone)) zones.unshift(displayTimezone);
+  zones.sort();
+  // group by region prefix ("Europe/Berlin" -> "Europe"); bare zones go to "Other"
+  const groups = {};
+  zones.forEach(z => {
+    const i = z.indexOf('/');
+    const region = i > 0 ? z.slice(0, i) : 'Other';
+    (groups[region] = groups[region] || []).push(z);
+  });
+  Object.keys(groups).sort().forEach(region => {
+    const og = document.createElement('optgroup');
+    og.label = region;
+    groups[region].forEach(z => {
+      const opt = document.createElement('option');
+      opt.value = z;
+      opt.textContent = z;
+      og.appendChild(opt);
+    });
+    select.appendChild(og);
+  });
+  select.value = displayTimezone;
+  select.addEventListener('change', () => setTimezone(select.value));
+}
+
+function setTimezone(tz) {
+  if (!tz || tz === displayTimezone) return;
+  displayTimezone = tz;
+  // re-evaluate day grouping of imported tracks in the new timezone
+  // (splits tracks that now span several days, merges tracks whose points
+  // now share one calendar day). Point row indices change afterwards.
+  const regrouped = regroupTracksForTimezone();
+  if (regrouped) {
+    // track/point indices are invalid after regrouping – drop all selection state
+    if (window.selectedPoints) window.selectedPoints.clear();
+    if (typeof window.updateSelectedPointsSource === 'function') window.updateSelectedPointsSource();
+    pinnedPoint = null;
+    window.lastSelectedPoint = null;
+    hidePointInfo(true);
+    window.lastPointInfoProps = null;
+  } else {
+    // refresh the point info panel if it is currently open so its time follows the new zone
+    const panel = document.getElementById('pointInfo');
+    if (panel && panel.style.display !== 'none' && window.lastPointInfoProps) {
+      showPointInfo(window.lastPointInfoProps);
+    }
+  }
+  updateAllLayers();
+  updatePointsList();
+  updateStatus();
+}
+
+// ---- track regrouping on timezone change ----------------------------------
+// Imported tracks carry an origin tag ({id, base}) so they can be re-grouped
+// by calendar day whenever the display timezone changes. Manual ("Track N")
+// tracks have no origin and are left untouched.
+let trackOriginSeq = 0;
+
+function regroupTracksForTimezone() {
+  const byOrigin = new Map();   // originId -> { base, items:[{point, color}], collapsed }
+  const originOrder = [];
+  let firstOriginIdx = -1;
+  tracks.forEach((track, ti) => {
+    if (!track.origin) return;
+    if (firstOriginIdx < 0) firstOriginIdx = ti;
+    if (!byOrigin.has(track.origin.id)) {
+      byOrigin.set(track.origin.id, { base: track.origin.base, items: [], collapsed: track.collapsed });
+      originOrder.push(track.origin.id);
+    }
+    const g = byOrigin.get(track.origin.id);
+    track.points.forEach(p => g.items.push({ point: p, color: track.color }));
+  });
+  if (firstOriginIdx < 0) return false;
+
+  // remove all imported tracks (in place – never rebind `tracks`)
+  for (let i = tracks.length - 1; i >= 0; i--) {
+    if (tracks[i].origin) tracks.splice(i, 1);
+  }
+
+  // rebuild one track per (origin, calendar day in the new timezone)
+  const insertIdx = Math.min(firstOriginIdx, tracks.length);
+  let idx = insertIdx;
+  originOrder.forEach(originId => {
+    const g = byOrigin.get(originId);
+    const days = {};
+    g.items.forEach(({ point, color }) => {
+      const d = dateStrInDisplayTz(point.timestamp);
+      if (!days[d]) days[d] = { points: [], color };   // keep the colour of the earliest contributing track
+      days[d].points.push(point);
+    });
+    Object.keys(days).sort().forEach(d => {
+      const pts = days[d].points.slice().sort((a, b) => a.timestamp - b.timestamp);
+      const track = {
+        id: tracks.length,
+        name: `${g.base} - ${d}`,
+        points: pts,
+        color: days[d].color,
+        collapsed: g.collapsed,
+        startTime: pts[0].timestamp,
+        origin: { id: originId, base: g.base }
+      };
+      tracks.splice(idx++, 0, track);
+    });
+  });
+  currentTrackIndex = Math.min(insertIdx, tracks.length - 1);
+  return true;
+}
+
 // --- initialise -----------------------------------------------------------
 document.addEventListener('DOMContentLoaded', () => {
   initMap();
@@ -53,6 +255,7 @@ document.addEventListener('DOMContentLoaded', () => {
   const localStr = now.getFullYear() + '-' + pad2(now.getMonth()+1) + '-' + pad2(now.getDate()) +
     'T' + pad2(now.getHours()) + ':' + pad2(now.getMinutes()) + ':' + pad2(now.getSeconds());
   document.getElementById('startDatetimeLocal').value = localStr;
+  populateTimezoneSelect();
   initControls();
   createNewTrack();
   updateStatus();
@@ -307,6 +510,8 @@ function onMapMouseMove(e) {
 
 // ---- point info panel ----------------------------------------------------
 function showPointInfo(props) {
+  // remember props so a timezone switch can re-render the open panel
+  window.lastPointInfoProps = props;
   const panel = document.getElementById('pointInfo');
   const title = document.getElementById('pointInfoTitle');
   const body = document.getElementById('pointInfoBody');
@@ -314,7 +519,7 @@ function showPointInfo(props) {
   let html = `
     <div class="sel-info-row"><span class="k">Lat</span><span class="v">${props.lat.toFixed(6)}</span></div>
     <div class="sel-info-row"><span class="k">Lng</span><span class="v">${props.lng.toFixed(6)}</span></div>
-    <div class="sel-info-row"><span class="k">Time</span><span class="v">${new Date(props.timestamp).toLocaleString()}</span></div>
+    <div class="sel-info-row"><span class="k">Time</span><span class="v">${formatDateTimeInDisplayTz(new Date(props.timestamp))}</span></div>
     <div class="sel-info-row"><span class="k">Speed</span><span class="v">${props.speed ? props.speed.toFixed(1)+' km/h' : '-'}</span></div>
     <div class="sel-info-row"><span class="k">Elev</span><span class="v">${props.elevation ? props.elevation.toFixed(1)+'m' : '-'}</span></div>
     <div class="sel-info-row"><span class="k">Acc</span><span class="v">${typeof props.accuracy === 'number' ? props.accuracy.toFixed(1)+'m' : '-'}</span></div>`;
@@ -377,6 +582,7 @@ function hidePointInfo(force = false) {
   if (pinnedPoint && !editModeEnabled) {
     clearPinned();
   }
+  window.lastPointInfoProps = null;
   if (el) el.style.display = 'none';
 }
 function deletePointFromInfo(ti, pi) {
@@ -425,7 +631,12 @@ function addPoint(lat, lng, options = {}) {
   const track = tracks[currentTrackIndex];
   let ts = options.timestamp || getCurrentPickerDate();
   if (!options.skipDayChangeCheck && shouldCreateNewTrackForDayChange(ts, track)) {
+    // a day-break continuation of the same recording inherits the origin of
+    // the track it continues, so lines are bridged and TZ regrouping keeps it
+    // together with the rest of the file
+    const inheritedOrigin = track.origin;
     createNewTrack();
+    if (inheritedOrigin) tracks[currentTrackIndex].origin = inheritedOrigin;
     return addPoint(lat, lng, options);
   }
   if (!options.skipStops && document.getElementById('autoStops').checked && shouldAddStop(track)) {
@@ -471,7 +682,10 @@ function removePoint(trackIdx, pointIdx) {
 
 function clearAll() {
   if (!confirm('Clear all tracks and points?')) return;
-  tracks = [];
+  // empty in place – never rebind `tracks`, otherwise the `window.tracks`
+  // reference captured at load time goes stale and selection/navigation
+  // (which read window.tracks) operate on the old data
+  tracks.length = 0;
   currentTrackIndex = 0;
   updateAllLayers();
   updatePointsList();
@@ -557,6 +771,27 @@ function updateAllLayers() {
       geometry: { type:'LineString', coordinates: linePts.map(p => [p.lng, p.lat]) }
     });
   });
+  // bridge consecutive tracks that belong to the same import (origin) so the
+  // whole file reads as one continuous path even across day breaks
+  for (let i = 0; i < tracks.length - 1; i++) {
+    const a = tracks[i], b = tracks[i+1];
+    if (!a.origin || !b.origin || a.origin.id !== b.origin.id) continue;
+    // connect the last passing point of `a` to the first passing point of `b`
+    let aEnd = null;
+    for (let j = a.points.length - 1; j >= 0; j--) {
+      if (pointPassesFilter(a.points[j])) { aEnd = a.points[j]; break; }
+    }
+    let bStart = null;
+    for (let j = 0; j < b.points.length; j++) {
+      if (pointPassesFilter(b.points[j])) { bStart = b.points[j]; break; }
+    }
+    if (!aEnd || !bStart) continue;
+    features.push({
+      type: 'Feature',
+      properties: { color: b.color },
+      geometry: { type:'LineString', coordinates: [[aEnd.lng, aEnd.lat], [bStart.lng, bStart.lat]] }
+    });
+  }
   map.getSource('tracks').setData({ type:'FeatureCollection', features });
 
   // points
@@ -598,7 +833,14 @@ function updatePointsList() {
   tracks.forEach(t => total += t.points.length);
   badge.textContent = total;
 
+  // flattened point list so the "diff to next point" column also spans
+  // track boundaries (last point of a track diffs against the first point
+  // of the following track)
+  const flat = [];
+  tracks.forEach((track, ti) => track.points.forEach((p, pi) => flat.push({ p, ti, pi })));
+
   let html = '';
+  let flatIdx = 0;
   tracks.forEach((track, ti) => {
     html += `<div class="gpx-track-header" onclick="toggleTrack(${ti})">
       <div class="track-info">
@@ -613,21 +855,40 @@ function updatePointsList() {
       </div>
     </div>`;
     if (!track.collapsed) {
+      html += `<div class="gpx-table-head">
+        <span>Time</span><span>Lat, Lon</span><span class="th-r">Acc</span><span class="th-r">Ele</span><span class="th-r">Δ next</span><span class="th-r">OSM</span>
+      </div>`;
       track.points.forEach((p, pi) => {
-        let speed = null;
-        if (pi>0) {
-          const prev = track.points[pi-1];
-          speed = (calculateDistance(prev.lat,prev.lng,p.lat,p.lng)/1000) / ((p.timestamp-prev.timestamp)/3600000);
+        const nxt = flat[flatIdx + 1];
+        let diffHtml = '<span class="num">–</span>';
+        if (nxt) {
+          const dist = calculateDistance(p.lat, p.lng, nxt.p.lat, nxt.p.lng);
+          const dtSec = (nxt.p.timestamp - p.timestamp) / 1000;
+          const cross = nxt.ti !== ti ? '<span style="color:var(--ink-faint,#888)">⇥ </span>' : '';
+          const speed = dtSec > 0 ? (dist / 1000) / (dtSec / 3600) : null;
+          const speedColor = speed ? getSpeedColorCached(speed) : '#888';
+          diffHtml = `<span class="diff-dist" style="color:${speedColor}">${cross}${formatDistShort(dist)}</span>` +
+            `<span class="diff-sep">·</span>` +
+            `<span class="diff-dt" style="color:${dtThresholdColor(dtSec)}">${formatDtShort(dtSec)}</span>`;
         }
         const passes = pointPassesFilter(p);
-        const speedColor = !passes ? '#9aa0a6' : (speed ? getSpeedColorCached(speed) : '#888');
         const rowSelected = (pinnedPoint && pinnedPoint.trackIndex === ti && pinnedPoint.pointIndex === pi) ||
           (window.selectedPoints && window.selectedPoints.has(`${ti}-${pi}`));
         html += `<div class="gpx-point${rowSelected ? ' selected' : ''}${passes ? '' : ' filtered'}" data-ti="${ti}" data-pi="${pi}" onclick="highlightPoint(${ti},${pi})">
-          <span><span class="speed-color-dot" style="background:${speedColor}"></span>${p.lat.toFixed(4)}, ${p.lng.toFixed(4)}</span>
-          <span class="time">${new Date(p.timestamp).toLocaleTimeString([],{hour:'2-digit',minute:'2-digit'})}</span>
+          <span class="time">${formatTimeSecInDisplayTz(p.timestamp)}</span>
+          <span class="coords">${p.lat.toFixed(4)}, ${p.lng.toFixed(4)}</span>
+          <span class="num">${typeof p.accuracy === 'number' ? p.accuracy.toFixed(0) + ' m' : '–'}</span>
+          <span class="num">${(p.elevation !== undefined && p.elevation !== null) ? p.elevation.toFixed(0) + ' m' : '–'}</span>
+          <span class="diff">${diffHtml}</span>
+          <span class="link-cell">
+            <a class="osm-link" href="${osmLinkFor(p.lat, p.lng)}" target="_blank" rel="noopener" title="Open in OpenStreetMap" onclick="event.stopPropagation()">↗</a>
+            <button class="osm-copy" title="Copy OpenStreetMap link" onclick="copyOsmLink(event, ${p.lat}, ${p.lng})">⧉</button>
+          </span>
         </div>`;
+        flatIdx++;
       });
+    } else {
+      flatIdx += track.points.length;
     }
   });
   if (!total) html = '<div style="padding:20px;text-align:center;color:var(--ink-faint)">No points yet</div>';
@@ -783,7 +1044,7 @@ function advancePickerTime(lastTs) {
 function shouldCreateNewTrackForDayChange(newTs, track) {
   if (!document.getElementById('autoNewTrack').checked || !track.points.length) return false;
   const last = track.points[track.points.length-1].timestamp;
-  return new Date(last).toDateString() !== new Date(newTs).toDateString();
+  return dateStrInDisplayTz(last) !== dateStrInDisplayTz(newTs);
 }
 function shouldAddStop(track) {
   return track.points.length >= 5 && Math.random() < stopProbability;
@@ -900,16 +1161,19 @@ function parseAndImportGPX(content, filename) {
   if (!allPoints.length) return;
   allPoints.sort((a,b)=>a.timestamp-b.timestamp);
 
-  // group by date
+  // group by date (in the display timezone)
   const days = {};
   allPoints.forEach(p => {
-    const dateStr = p.timestamp.toISOString().split('T')[0];
+    const dateStr = dateStrInDisplayTz(p.timestamp);
     if (!days[dateStr]) days[dateStr] = [];
     days[dateStr].push(p);
   });
 
   const sortedDates = Object.keys(days).sort();
   const bounds = new maplibregl.LngLatBounds();
+  // all day-tracks from this import share one origin so a later timezone
+  // switch can re-group their points
+  const origin = { id: ++trackOriginSeq, base: filename.replace('.gpx','') };
 
   sortedDates.forEach((dateStr, idx) => {
     const dayPoints = days[dateStr];
@@ -925,6 +1189,7 @@ function parseAndImportGPX(content, filename) {
     } else {
       track = createNewTrack(trackName, dayPoints[0].timestamp, true);
     }
+    track.origin = origin;
 
     dayPoints.forEach(p => {
       addPoint(p.lat, p.lng, {
@@ -956,7 +1221,7 @@ function handleGoogleJson(content, filename) {
     const days = {};
     locs.forEach(loc => {
       const ts = new Date(loc.timestamp || loc.timestampMs);
-      const dateStr = ts.toISOString().split('T')[0];
+      const dateStr = dateStrInDisplayTz(ts);
       if (!days[dateStr]) days[dateStr] = [];
       days[dateStr].push({ lat: loc.latitudeE7/1e7, lng: loc.longitudeE7/1e7, timestamp: ts, elevation: loc.altitude||0, accuracy: loc.accuracy||0 });
     });
@@ -983,10 +1248,12 @@ function importSelectedJsonDates() {
   const sorted = Array.from(selectedDates).sort();
   let total = 0;
   const bounds = new maplibregl.LngLatBounds();
+  const origin = { id: ++trackOriginSeq, base: pendingJsonFilename };
   sorted.forEach(dateStr => {
     const dayPoints = pendingJsonData[dateStr];
     dayPoints.sort((a,b)=>a.timestamp-b.timestamp);
     const track = createNewTrack(`${pendingJsonFilename} - ${dateStr}`, dayPoints[0].timestamp, true);
+    track.origin = origin;
     dayPoints.forEach(p => {
       addPoint(p.lat,p.lng,{ timestamp:p.timestamp, elevation:p.elevation, accuracy:p.accuracy, skipNoise:true, skipStops:true, skipTimeUpdate:true, skipDayChangeCheck:true, skipUpdate: true });
       bounds.extend([p.lng,p.lat]);

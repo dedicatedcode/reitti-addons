@@ -1,0 +1,24 @@
+Vehicle model attribution
+=========================
+
+The vehicle GLB models in this extension are derived from models published by
+Grab3D (https://grab3d.com/) and are released under CC0 1.0 Universal
+(Public Domain Dedication): https://creativecommons.org/publicdomain/zero/1.0/
+
+Attribution is not required under CC0, but is recorded here.
+
+Sources:
+- City Bus: https://grab3d.com/models/vehicles/city-bus/
+- Tram: https://grab3d.com/models/vehicles/tram/
+- Subway Train: https://grab3d.com/models/vehicles/subway-train/
+- Subway Car: https://grab3d.com/models/vehicles/subway-car/
+- High-Speed Train: https://grab3d.com/models/vehicles/high-speed-train/
+
+Modifications: rotated to the extension's -Z forward axis, simplified,
+texture-resized, tram/subway ground tracks removed, and body paint converted
+to neutral or tintable greyscale textures.
+
+Kits:
+- Cozy Vehicles Kit: https://grab3d.com/kits/cozy-vehicles/
+- Cozy Trains & Railway Kit: https://grab3d.com/kits/cozy-trains/
+- City Builder Pack: https://grab3d.com/packs/city-builder-pack/

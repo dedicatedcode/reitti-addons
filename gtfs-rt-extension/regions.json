@@ -1,0 +1,12 @@
+{
+  "regions": [
+    {
+      "id": "nahsh",
+      "name": "Schleswig-Holstein / Hamburg",
+      "bbox": [7.8, 53.3, 11.4, 55.1],
+      "staticUrl": "https://opendata.schleswig-holstein.de/dataset/5e0652d8-7f59-42fc-92ab-a6358f800e1d/resource/f0eff75f-88de-411c-8bdc-0a55bb67d9fd/download/fahrplandaten",
+      "minZoom": 10,
+      "priority": 10
+    }
+  ]
+}

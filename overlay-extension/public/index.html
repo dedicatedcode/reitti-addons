@@ -1,0 +1,146 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Reitti Overlays</title>
+  <meta name="description" content="Manage time-windowed GPX and GeoJSON overlays for Reitti">
+  <link rel="icon" href="img/icon.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="vendor/maplibre-gl.css">
+  <link rel="stylesheet" href="app.css">
+</head>
+<body>
+<header id="topbar">
+  <a class="brand" href="./" title="Reitti Overlays">
+    <img src="img/logo.svg" alt="" width="26" height="26">
+    <span>Reitti Overlays</span>
+  </a>
+  <div class="top-actions">
+    <button type="button" id="btnImport" class="head-btn primary">Import GPX / GeoJSON</button>
+    <button type="button" id="btnRefresh" class="head-btn" title="Reload overlays and preview">Refresh</button>
+    <span id="statusText" class="top-status"></span>
+  </div>
+</header>
+
+<main>
+  <div id="map" aria-label="Overlay map"></div>
+
+  <aside id="listPanel" class="panel floating">
+    <div class="panel-head">
+      <h4>Overlays</h4>
+      <span id="overlayCount" class="count">0</span>
+    </div>
+    <div id="overlayList" class="overlay-list"></div>
+    <div id="listFooter" class="list-footer">
+      <div id="sizeSummary" class="muted"></div>
+      <details class="setup">
+        <summary>Reitti setup</summary>
+        <p>Register this URL once under <strong>Settings → Map Extensions</strong>:</p>
+        <div class="copy-row">
+          <input id="registrationUrl" readonly>
+          <button type="button" id="btnCopyRegistration" class="head-btn small">Copy</button>
+        </div>
+        <p>Then enable the <strong id="setupLayerName">Overlays</strong> layer once in the map's <strong>Extension Layers</strong> control.</p>
+        <p class="muted">In Docker, register the URL Reitti can resolve from its container, for example <code>http://overlay-extension:8090</code>, not the URL you use in the browser.</p>
+      </details>
+    </div>
+  </aside>
+
+  <aside id="editorPanel" class="panel floating" hidden>
+    <form id="editorForm" autocomplete="off">
+      <div class="panel-head">
+        <h4>Edit overlay</h4>
+        <div class="head-actions">
+          <button type="button" id="btnFit" class="head-btn small" title="Fit the map to this overlay">Fit</button>
+          <button type="button" id="btnDelete" class="head-btn small danger" title="Delete this overlay">Delete</button>
+        </div>
+      </div>
+      <div class="editor-body">
+        <label class="field">
+          <span>Name</span>
+          <input id="fieldName" maxlength="200" required>
+        </label>
+
+        <label class="check-row">
+          <input type="checkbox" id="fieldEnabled">
+          <span>Included on the Reitti layer</span>
+        </label>
+
+        <div class="grid-2">
+          <label class="field">
+            <span>Colour</span>
+            <input type="color" id="fieldColor">
+          </label>
+          <label class="field">
+            <span>Line width (px)</span>
+            <input type="number" id="fieldWidth" min="1" max="20" step="0.5">
+          </label>
+        </div>
+
+        <label class="field">
+          <span>Line opacity <output id="alphaValue">86%</output></span>
+          <input type="range" id="fieldAlpha" min="0" max="255" step="1">
+        </label>
+
+        <label class="field">
+          <span>Time zone</span>
+          <input id="fieldTimezone" list="timezoneList" spellcheck="false">
+          <datalist id="timezoneList"></datalist>
+        </label>
+
+        <label class="field">
+          <span>Validity</span>
+          <select id="fieldMode">
+            <option value="always">Always</option>
+            <option value="range">Date &amp; time range</option>
+            <option value="daily">Daily time window</option>
+          </select>
+        </label>
+
+        <div id="rangeFields" class="validity-block" hidden>
+          <div class="grid-2">
+            <label class="field"><span>From date</span><input type="date" id="rangeStartDate"></label>
+            <label class="field"><span>From time</span><input type="time" id="rangeStartTime"></label>
+            <label class="field"><span>To date</span><input type="date" id="rangeEndDate"></label>
+            <label class="field"><span>To time</span><input type="time" id="rangeEndTime"></label>
+          </div>
+          <button type="button" id="btnToday" class="link-btn">Set to today</button>
+        </div>
+
+        <div id="dailyFields" class="validity-block" hidden>
+          <div class="grid-2">
+            <label class="field"><span>Daily from</span><input type="time" id="dailyStart"></label>
+            <label class="field"><span>Daily to</span><input type="time" id="dailyEnd"></label>
+            <label class="field"><span>First day (optional)</span><input type="date" id="dailyFrom"></label>
+            <label class="field"><span>Last day (optional)</span><input type="date" id="dailyTo"></label>
+          </div>
+          <button type="button" id="btnAllDay" class="link-btn">All day</button>
+        </div>
+
+        <div id="editorStatus" class="status-line"></div>
+        <div id="editorStats" class="stats"></div>
+
+        <div class="editor-actions">
+          <button type="submit" class="head-btn primary">Save</button>
+          <button type="button" id="btnReplace" class="head-btn">Replace file</button>
+          <a id="btnExport" class="head-btn" href="#" download>Export</a>
+        </div>
+      </div>
+    </form>
+  </aside>
+
+  <div id="emptyState" class="empty floating">
+    <h3>No overlays yet</h3>
+    <p>Import a GPX or GeoJSON file to show it on Reitti's map during its validity window.</p>
+    <button type="button" id="btnEmptyImport" class="head-btn primary">Import a file</button>
+  </div>
+</main>
+
+<div id="toast" class="toast" hidden></div>
+<input id="fileInput" type="file" accept=".gpx,.geojson,.json,application/gpx+xml,application/geo+json,application/json" hidden>
+<input id="replaceInput" type="file" accept=".gpx,.geojson,.json,application/gpx+xml,application/geo+json,application/json" hidden>
+
+<script src="vendor/maplibre-gl.js"></script>
+<script src="app.js"></script>
+</body>
+</html>

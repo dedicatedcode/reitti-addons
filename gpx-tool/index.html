@@ -130,7 +130,7 @@
     #pointsPanel {
       position: fixed;
       right: 16px; top: 110px;
-      width: 380px;
+      width: 450px;
       max-height: calc(100vh - 200px);
       display: flex; flex-direction: column;
       background: var(--panel-solid);
@@ -150,12 +150,27 @@
     }
     .gpx-track-header:hover { background: rgba(255,255,255,0.05); }
     .gpx-track-header .track-color { width: 12px; height: 12px; border-radius: 50%; margin-right: 8px; display: inline-block; vertical-align: middle; }
-    .gpx-point { padding: 4px 12px 4px 28px; font-size: 11px; border-bottom: 1px solid rgba(255,255,255,0.03); cursor: pointer; display: flex; justify-content: space-between; }
+    .gpx-point { padding: 3px 10px 3px 28px; font-size: 11.5px; border-bottom: 1px solid rgba(255,255,255,0.03); cursor: pointer; display: grid; grid-template-columns: 52px minmax(0,1fr) 36px 38px 112px 40px; gap: 3px; align-items: center; }
     .gpx-point:hover { background: rgba(255,255,255,0.04); }
     .gpx-point.selected { background: rgba(242,196,112,0.18); }
-    .gpx-point .coords { color: var(--ink-dim); }
-    .gpx-point .time { color: var(--color-text-white); min-width: 70px; text-align: right; }
-    .speed-color-dot { display:inline-block; width:8px; height:8px; border-radius:2px; margin-right:4px; }
+    .gpx-point .coords { color: var(--ink-dim); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .gpx-point .time { color: var(--color-text-white); font-variant-numeric: tabular-nums; }
+    .gpx-point .num { color: var(--ink-dim); text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
+    .gpx-point .diff { text-align: right; line-height: 1.15; font-variant-numeric: tabular-nums; display: flex; flex-direction: row; align-items: baseline; justify-content: flex-end; gap: 4px; white-space: nowrap; }
+    .gpx-point .diff-dist { font-weight: 600; white-space: nowrap; }
+    .gpx-point .diff-dt { font-size: 11.5px; white-space: nowrap; font-weight: 600; }
+    .gpx-point .diff-sep { color: var(--ink-faint, #888); }
+    .gpx-point .link-cell { display: flex; align-items: center; justify-content: flex-end; gap: 2px; }
+    .gpx-point .osm-link { color: var(--color-highlight, #F5DEB3); text-decoration: none; font-size: 11px; }
+    .gpx-point .osm-link:hover { color: var(--ink); }
+    .gpx-point .osm-copy { background: none; border: none; color: var(--ink-dim); cursor: pointer; font-size: 11px; padding: 0 2px; line-height: 1; }
+    .gpx-point .osm-copy:hover { color: var(--ink); }
+    .gpx-table-head {
+      padding: 4px 10px 3px 28px; font-size: 11px; letter-spacing: 0.4px; text-transform: uppercase;
+      color: var(--ink-faint, #888); border-bottom: 1px solid rgba(255,255,255,0.08);
+      display: grid; grid-template-columns: 52px minmax(0,1fr) 36px 38px 112px 40px; gap: 3px; align-items: center;
+    }
+    .gpx-table-head .th-r { text-align: right; }
 
     /* -- track header sub‑components -- */
     .track-info {
@@ -396,10 +411,53 @@
       cursor: pointer;
     }
 
+    /* timezone selector in the header (right aligned, before Help) */
+    .tz-select {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      margin-left: auto;
+      padding: 0 10px;
+      flex-shrink: 0;
+      white-space: nowrap;
+    }
+    .tz-select-label {
+      font-size: 12px;
+      color: var(--ink-dim, #ccc);
+    }
+    .tz-select select {
+      height: 32px;
+      max-width: 230px;
+      padding: 0 8px;
+      background: rgba(255, 255, 255, 0.03);
+      color: var(--ink, #eee);
+      border: 1px solid var(--panel-line, rgba(255,255,255,0.15));
+      border-radius: 6px;
+      font-family: inherit;
+      font-size: 12px;
+      cursor: pointer;
+    }
+    .tz-select select:hover {
+      background: rgba(255, 255, 255, 0.07);
+    }
+    .tz-select select:focus-visible {
+      outline: 1px solid var(--color-highlight, #F5DEB3);
+    }
+    .tz-select select option,
+    .tz-select select optgroup {
+      background: var(--panel-bg, #22242a);
+      color: var(--ink, #eee);
+    }
+
     /* filtered (grayed-out) rows in the points list */
     .gpx-point.filtered,
     .gpx-point.filtered .time,
-    .gpx-point.filtered .coords {
+    .gpx-point.filtered .coords,
+    .gpx-point.filtered .num,
+    .gpx-point.filtered .diff,
+    .gpx-point.filtered .diff-dist,
+    .gpx-point.filtered .diff-dt,
+    .gpx-point.filtered .link-cell {
       color: var(--ink-faint, #888);
       opacity: 0.55;
     }
@@ -429,7 +487,11 @@
       <span class="accuracy-filter-value" id="minAccuracyValue">off</span>
       <button class="head-btn" id="btnAccuracyFilterOff" title="Reset accuracy filter"><i class="lni lni-refresh-circle-1-clockwise"></i> Reset</button>
     </div>
-    <button class="head-btn" onclick="toggleHelp()" style="margin-left:auto;">❓ Help</button>
+    <div class="tz-select" title="Display timezone for all GPS point times">
+      <span class="tz-select-label">🌐</span>
+      <select id="timezoneSelect" aria-label="Display timezone"></select>
+    </div>
+    <button class="head-btn" onclick="toggleHelp()">❓ Help</button>
     <button class="head-btn" onclick="showAbout()">About</button>
   </div>
 </div>

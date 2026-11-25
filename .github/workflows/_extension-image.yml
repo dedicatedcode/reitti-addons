@@ -1,0 +1,147 @@
+name: Build extension image
+
+on:
+  workflow_call:
+    inputs:
+      component:
+        description: Directory that contains the component
+        required: true
+        type: string
+      image:
+        description: Image name without a registry prefix
+        required: true
+        type: string
+      tag_prefix:
+        description: Git tag prefix without the trailing -v
+        required: true
+        type: string
+      version_file:
+        description: File that holds the semantic version (package.json or VERSION)
+        required: true
+        type: string
+      test_command:
+        description: Test command to run in the component directory; empty skips tests
+        required: false
+        default: ''
+        type: string
+      manual_tag:
+        description: Optional image tag for a manual build
+        required: false
+        default: ''
+        type: string
+    secrets:
+      DOCKER_HUB_USERNAME:
+        required: false
+      DOCKER_HUB_ACCESS_TOKEN:
+        required: false
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v7
+
+      - name: Set up Node.js
+        if: inputs.test_command != ''
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: ${{ inputs.component }}/package-lock.json
+
+      - name: Install dependencies
+        if: inputs.test_command != ''
+        working-directory: ${{ inputs.component }}
+        run: npm ci
+
+      - name: Run tests
+        if: inputs.test_command != ''
+        working-directory: ${{ inputs.component }}
+        run: ${{ inputs.test_command }}
+
+  build:
+    needs: test
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v7
+
+      - name: Verify tag matches the component version
+        if: startsWith(github.ref, 'refs/tags/')
+        shell: bash
+        run: |
+          set -euo pipefail
+          version_file="${{ inputs.version_file }}"
+          if [[ "$version_file" == *.json ]]; then
+            version="$(jq -r .version "$version_file")"
+          else
+            version="$(tr -d '[:space:]' < "$version_file")"
+          fi
+          expected="${{ inputs.tag_prefix }}-v${version}"
+          if [[ "${GITHUB_REF_NAME}" != "$expected" ]]; then
+            echo "::error::Tag ${GITHUB_REF_NAME} does not match ${expected}"
+            exit 1
+          fi
+
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v3
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v4
+
+      - name: Login to Docker Hub
+        if: github.event_name != 'pull_request'
+        uses: docker/login-action@v4
+        with:
+          username: ${{ secrets.DOCKER_HUB_USERNAME }}
+          password: ${{ secrets.DOCKER_HUB_ACCESS_TOKEN }}
+
+      - name: Login to GitHub Container Registry
+        if: github.event_name != 'pull_request'
+        uses: docker/login-action@v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ github.token }}
+
+      - name: Extract metadata
+        id: meta
+        uses: docker/metadata-action@v6
+        with:
+          images: |
+            dedicatedcode/${{ inputs.image }}
+            ghcr.io/${{ github.repository_owner }}/${{ inputs.image }}
+          tags: |
+            type=raw,value=develop,enable=${{ github.ref == 'refs/heads/main' && inputs.manual_tag == '' }}
+            type=sha,format=short,prefix=sha-,enable=${{ github.ref == 'refs/heads/main' && inputs.manual_tag == '' }}
+            type=match,pattern=${{ inputs.tag_prefix }}-v(.*),group=1,enable=${{ startsWith(github.ref, 'refs/tags/') }}
+            type=match,pattern=${{ inputs.tag_prefix }}-v([0-9]+\.[0-9]+)\..*,group=1,enable=${{ startsWith(github.ref, 'refs/tags/') }}
+            type=raw,value=latest,enable=${{ startsWith(github.ref, 'refs/tags/') }}
+            type=raw,value=${{ inputs.manual_tag }},enable=${{ inputs.manual_tag != '' }}
+            type=ref,event=pr,enable=${{ github.event_name == 'pull_request' }}
+            type=ref,event=branch,enable=${{ github.event_name == 'workflow_dispatch' && github.ref != 'refs/heads/main' && inputs.manual_tag == '' }}
+
+      - name: Build and push
+        uses: docker/build-push-action@v7
+        with:
+          context: ${{ inputs.component }}
+          platforms: ${{ github.event_name == 'pull_request' && 'linux/amd64' || 'linux/amd64,linux/arm64' }}
+          push: ${{ github.event_name != 'pull_request' }}
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha,scope=${{ inputs.component }}
+          cache-to: type=gha,mode=max,scope=${{ inputs.component }}
+
+      - name: Write job summary
+        if: always()
+        shell: bash
+        run: |
+          {
+            echo "## ${{ inputs.image }}"
+            echo ""
+            echo "**Tags**"
+            echo '```'
+            echo "${{ steps.meta.outputs.tags }}"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"

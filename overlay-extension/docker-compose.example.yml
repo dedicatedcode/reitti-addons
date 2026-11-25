@@ -1,0 +1,36 @@
+# Example: Reitti plus the Overlay extension on one Compose network.
+#
+# 1. docker compose -f docker-compose.example.yml up -d
+# 2. Open http://localhost:8090/ and import a GPX/GeoJSON file.
+# 3. In Reitti: Settings -> Map Extensions -> add
+#      http://overlay-extension:8090
+# 4. In the map: Extension Layers -> enable "Overlays" once.
+
+services:
+  reitti:
+    image: dedicatedcode/reitti:develop   # requires a build with map extensions
+    restart: unless-stopped
+    ports:
+      - "8080:8080"
+    environment:
+      # The extension's container name must be allow-listed.
+      REITTI_EXTENSIONS_ALLOWED_HOSTS: overlay-extension
+      # ... add your existing Reitti settings here (database, etc.) ...
+
+  overlay-extension:
+    build: .
+    # Or use a published image:
+    # image: dedicatedcode/reitti-overlay-extension
+    restart: unless-stopped
+    ports:
+      # Only needed to reach the admin UI from the host/LAN.
+      - "8090:8090"
+    volumes:
+      - overlay-data:/app/data
+    environment:
+      DEFAULT_TIMEZONE: Europe/Berlin
+      # PORT: 8090
+      # MAP_STYLE_URL: https://basemaps.cartocdn.com/gl/positron-gl-style/style.json
+
+volumes:
+  overlay-data:
