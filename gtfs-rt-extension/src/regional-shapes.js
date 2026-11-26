@@ -2,6 +2,7 @@ import { existsSync, statSync } from "node:fs";
 import { rm } from "node:fs/promises";
 import { join } from "node:path";
 import { eachRow, integer, listEntries, number, openZip } from "./estimated-static.js";
+import { resolveRegionStaticUrl } from "./regions.js";
 import { fetchStaticToFile } from "./static-cache.js";
 
 const REGIONAL_ENTRY_LIMITS = Object.freeze({
@@ -330,6 +331,7 @@ export class RegionalShapesService {
     now = Date.now,
     logger = console,
     downloadStatic = fetchStaticToFile,
+    resolveStaticUrl = (region, signal) => resolveRegionStaticUrl(fetchImpl, region, signal),
     buildIndex = buildRegionalShapeIndex,
     matcher = matchRegionalShapes,
   } = {}) {
@@ -339,6 +341,7 @@ export class RegionalShapesService {
     this.now = now;
     this.logger = logger;
     this.downloadStatic = downloadStatic;
+    this.resolveStaticUrl = resolveStaticUrl;
     this.buildIndex = buildIndex;
     this.matcher = matcher;
     this.regions = (config.regions || []).filter((region) => region.enabled !== false);
@@ -470,9 +473,10 @@ export class RegionalShapesService {
       }
     }
     try {
+      const staticUrl = await this.resolveStaticUrl(region, signal);
       const download = await this.downloadStatic(
         this.fetchImpl,
-        region.staticUrl,
+        staticUrl,
         signal,
         cachePath,
       );

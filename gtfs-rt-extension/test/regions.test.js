@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { loadRegions } from "../src/regions.js";
+import { loadRegions, resolveRegionStaticUrl } from "../src/regions.js";
 
 async function withRegionFile(content, callback) {
   const directory = await mkdtemp(join(tmpdir(), "reitti-regions-"));
@@ -21,6 +21,8 @@ test("loads the built-in NAH.SH region when no file is present", () => {
   assert.equal(regions.length, 1);
   assert.equal(regions[0].id, "nahsh");
   assert.deepEqual(regions[0].bbox, [7.8, 53.3, 11.4, 55.1]);
+  assert.match(regions[0].staticUrl, /\/api\/3\/action\/package_show\?id=/);
+  assert.equal(regions[0].staticResource, "fahrplandaten");
   assert.equal(regions[0].minZoom, 10);
   assert.equal(regions[0].maxStopDistanceMeters, 150);
   assert.equal(regions[0].minCoverage, 0.7);
@@ -64,6 +66,40 @@ test("skips disabled regions and accepts a bare array", async () => {
     const regions = loadRegions({ REGIONS_FILE: path });
     assert.deepEqual(regions.map((region) => region.id), ["enabled"]);
   });
+});
+
+test("resolves CKAN package resources instead of pinning a rotating resource id", async () => {
+  const region = loadRegions({}, { cwd: "/tmp/definitely-no-regions-file" })[0];
+  const requests = [];
+  const fetchImpl = async (url) => {
+    requests.push(url);
+    return Response.json({
+      success: true,
+      result: {
+        resources: [
+          { id: "old", name: "fahrplandaten", url: "https://example.com/old.zip", state: "deleted" },
+          { id: "new", name: "fahrplandaten", url: "https://example.com/latest.zip", state: "active" },
+        ],
+      },
+    });
+  };
+  assert.equal(await resolveRegionStaticUrl(fetchImpl, region, new AbortController().signal),
+    "https://example.com/latest.zip");
+  assert.deepEqual(requests, [region.staticUrl]);
+});
+
+test("keeps direct region URLs without contacting an index", async () => {
+  let requested = 0;
+  const region = {
+    id: "direct",
+    staticUrl: "https://example.com/direct.zip",
+    staticResource: null,
+  };
+  assert.equal(await resolveRegionStaticUrl(async () => {
+    requested += 1;
+    throw new Error("must not be called");
+  }, region, new AbortController().signal), "https://example.com/direct.zip");
+  assert.equal(requested, 0);
 });
 
 test("rejects invalid region configuration", async () => {

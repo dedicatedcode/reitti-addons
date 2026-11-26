@@ -187,6 +187,7 @@ differs.
 | `ESTIMATED_REFRESH_INTERVAL_MS`         | `15000`          | GTFS.de TripUpdates refresh interval. Conditional requests avoid re-downloading an unchanged feed. |
 | `ESTIMATED_POSITION_REFRESH_INTERVAL_MS`| `15000`          | Background interval for recalculating estimated positions from the cached TripUpdates. |
 | `STATIC_REFRESH_INTERVAL_MS`            | `300000`         | Static GTFS ZIP refresh interval for the Germany profile. Re-downloads are revalidated against the cached ZIP. |
+| `STATIC_INDEX_REBUILD_INTERVAL_MS`      | `3600000`        | When the ZIP is unchanged, rebuild the in-memory index for newly seen realtime trips at most this often. Parsing the full archive takes several minutes. |
 | `STATIC_CACHE_DIR`                      | `data/gtfs-static` | Static ZIP cache directory, resolved against the working directory (`/app/data/gtfs-static` in the image). Mount this path to keep the archive between container recreations. |
 | `REGIONS_FILE`                          | `regions.json`   | Optional regional shapes registry. Relative paths resolve against the working directory. The image bakes `/app/regions.json`. |
 | `REGION_SHAPES_MIN_ZOOM`                | `10`             | Minimum zoom that activates a regional shapes feed. Regions may override this with their own `minZoom`. |
@@ -207,13 +208,16 @@ modes.
 - After `LIVE_CITY_IDLE_TIMEOUT_MS` without demand, an activated live feed is stopped and released.
 - Estimated vehicles inside a live city are hidden only once that live feed has successfully produced data. If a live
   feed is starting or failing, estimates remain visible instead of leaving the city empty.
-- Static indexing is restricted to trips present in the current realtime feed, not every German trip.
+- Static indexing is restricted to trips present in the current realtime feed, not every German trip. Revalidation
+  reuses the parsed index while the archive is unchanged; new realtime trips trigger at most one rebuild per
+  `STATIC_INDEX_REBUILD_INTERVAL_MS`.
 - GTFS.de's free archive has no `shapes.txt`, so ordered stop geometry is used as a straight-line fallback between
   stops. Estimated positions are **predictions, not measured GPS**; live city vehicles report actual positions and do
   not fall back to estimates once their feed is active.
 - The realtime feed is polled every 15 seconds using `ETag` / `Last-Modified` conditional requests, so an unchanged
   feed costs only headers. The all-Germany estimate processes around 20k vehicles per cycle; narrowing `BBOX` to the
-  region you actually view reduces CPU and improves update latency.
+  region you actually view, or raising `ESTIMATED_POSITION_REFRESH_INTERVAL_MS`, reduces CPU and improves update
+  latency. Reitti interpolates between updates, so 20–30 seconds is still smooth.
 - Regional feeds with `shapes.txt` are loaded on demand. Until a region is ready, vehicles keep the straight-line
   fallback. Once ready, matched trips switch to real route geometry.
 
@@ -246,7 +250,8 @@ regions by editing or mounting `/app/regions.json`:
       "id": "nahsh",
       "name": "Schleswig-Holstein / Hamburg",
       "bbox": [7.8, 53.3, 11.4, 55.1],
-      "staticUrl": "https://opendata.schleswig-holstein.de/dataset/.../download/fahrplandaten",
+      "staticUrl": "https://opendata.schleswig-holstein.de/api/3/action/package_show?id=...",
+      "staticResource": "fahrplandaten",
       "minZoom": 10,
       "priority": 10
     }
@@ -257,6 +262,8 @@ regions by editing or mounting `/app/regions.json`:
 Each region supports:
 
 - `id`, `name`, `bbox`, `staticUrl`
+- `staticResource` — optional resource name or id; when `staticUrl` is a CKAN `package_show` API URL, the
+  current download URL is resolved from the package instead of pinning a resource id that changes on every update
 - `minZoom` (overrides `REGION_SHAPES_MIN_ZOOM`)
 - `priority` for overlapping regions
 - `maxStopDistanceMeters` (default 150)

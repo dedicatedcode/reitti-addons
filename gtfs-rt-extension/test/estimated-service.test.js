@@ -1,5 +1,8 @@
 import test from "node:test";
 import assert from "node:assert/strict";
+import { mkdtemp, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { loadConfig } from "../src/config.js";
 import { FeedService } from "../src/feed-service.js";
 import { feedBuffer, vehicleEntity } from "./helpers.js";
@@ -98,6 +101,57 @@ test("FeedService exposes static indexing errors and retains the previous index"
   assert.equal(service.staticFeed, previous);
   assert.match(service.getHealth().static.lastError, /open static GTFS ZIP/);
   assert.equal(service.getHealth().status, "degraded");
+});
+
+test("reuses an unchanged static index and only rebuilds for new trips after the cooldown", async (t) => {
+  const cacheDir = await mkdtemp(join(tmpdir(), "reitti-static-index-"));
+  t.after(() => rm(cacheDir, { recursive: true, force: true }));
+  const archive = estimatedStaticZip();
+  let realtime = feedBuffer({
+    headerTimestamp: Math.floor(BETWEEN_NOW / 1000),
+    entities: [tripEntity("t-bus")],
+  });
+  let now = BETWEEN_NOW;
+  let staticRequests = 0;
+  const config = loadConfig({
+    FEED_TYPE: "gtfs-rt-estimated",
+    GTFS_RT_URL: "https://fixtures.invalid/realtime",
+    GTFS_STATIC_URL: "https://fixtures.invalid/static.zip",
+    BBOX: OUTPUT_BBOX.join(","),
+    STATIC_CACHE_DIR: cacheDir,
+    STATIC_INDEX_REBUILD_INTERVAL_MS: "60000",
+  });
+  const service = new FeedService(config, {
+    now: () => now,
+    logger: { info() {}, error() {} },
+    fetchImpl: async (url, options = {}) => {
+      if (url.endsWith("static.zip")) {
+        staticRequests += 1;
+        if (options.headers?.["if-none-match"] === '"static-etag"') {
+          return new Response(null, { status: 304 });
+        }
+        return new Response(archive, { headers: { etag: '"static-etag"' } });
+      }
+      return new Response(realtime);
+    },
+  });
+  t.after(() => service.stop());
+
+  assert.equal(await service.refreshStatic(), true);
+  const firstIndex = service.staticFeed;
+  assert.equal(await service.refreshStatic(), true);
+  assert.equal(staticRequests, 2);
+  assert.equal(service.staticFeed, firstIndex, "an unchanged archive keeps the parsed index");
+
+  realtime = feedBuffer({
+    headerTimestamp: Math.floor(BETWEEN_NOW / 1000),
+    entities: [tripEntity("t-bus"), tripEntity("t-tram")],
+  });
+  now += 60_001;
+  assert.equal(await service.refreshStatic(), true);
+  assert.notEqual(service.staticFeed, firstIndex);
+  assert.equal(service.staticFeed.trips.has("t-bus"), true);
+  assert.equal(service.staticFeed.trips.has("t-tram"), true);
 });
 
 test("applies and removes regional shapes through the estimated service", async (t) => {

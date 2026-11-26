@@ -145,6 +145,14 @@ test("skips cancelled, stale and unknown trips, uses stop geometry without shape
   assert.deepEqual(estimate(index, [tripEntity("t-bus")]).vehicles, []);
 });
 
+test("skips trips far outside their service window before preparing route geometry", async () => {
+  const index = await setup();
+  const later = Date.parse("2026-01-15T20:00:00.000Z");
+  const result = estimate(index, [tripEntity("t-bus", { timestamp: later / 1000 })], later);
+  assert.deepEqual(result.vehicles, []);
+  assert.equal(index.preparedShapes.size, 0);
+});
+
 test("maps route types to display vehicle types", async () => {
   const index = await setup();
   const result = estimate(index, ["t-bus", "t-tram", "t-train", "t-ferry"].map((tripId) => tripEntity(tripId)));
@@ -208,6 +216,17 @@ test("applies TripDescriptor.startTime to the static trip template", async () =>
   assert.equal(vehicle.previousDeparture, "2026-01-15T08:00:00.000Z");
   assert.equal(vehicle.nextArrival, "2026-01-15T08:10:00.000Z");
   assert.ok(vehicle.vehicleId.endsWith(":09:00:00"));
+});
+
+test("shifts the active-trip window with a TripDescriptor.startTime override", async () => {
+  const index = await setup();
+  const now = Date.parse("2026-01-15T19:05:00.000Z");
+  const entity = tripEntity("t-bus", { timestamp: now / 1000 });
+  entity.tripUpdate.trip.startTime = "20:00:00";
+  const result = estimate(index, [entity], now);
+  assert.equal(result.vehicles.length, 1);
+  assert.equal(result.vehicles[0].previousDeparture, "2026-01-15T19:00:00.000Z");
+  assert.equal(result.vehicles[0].nextArrival, "2026-01-15T19:10:00.000Z");
 });
 
 test("does not attach a sequenced update to another occurrence of a repeated stop", async () => {

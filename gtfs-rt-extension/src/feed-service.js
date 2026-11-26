@@ -132,6 +132,8 @@ export class FeedService {
     this.realtimeReceivedAt = null;
     this.lastEstimateAt = null;
     this.lastEstimateDurationMs = null;
+    this.lastEstimateFeedAt = null;
+    this.staticIndexBuiltAt = null;
     this.snapshot = { timestamp: new Date(now()).toISOString(), vehicles: [] };
     this.realtimeHealth = feedHealth();
     this.staticHealth = feedHealth();
@@ -200,7 +202,7 @@ export class FeedService {
   refreshEstimate() {
     if (!this.estimated || !this.realtimeFeed || !this.staticHealth.lastSuccessAt) return Promise.resolve(false);
     if (this.estimateRefresh) {
-      this.estimateQueued = true;
+      if (this.realtimeReceivedAt !== this.lastEstimateFeedAt) this.estimateQueued = true;
       return this.estimateRefresh;
     }
     this.estimateRefresh = this.updateEstimatedSnapshot()
@@ -222,6 +224,7 @@ export class FeedService {
 
   async updateEstimatedSnapshot() {
     const startedAt = Date.now();
+    this.lastEstimateFeedAt = this.realtimeReceivedAt;
     this.snapshot = await estimateTripUpdatesAsync(this.realtimeFeed, this.staticFeed, {
       bbox: this.config.bbox,
       agencyIds: this.config.agencyIds,
@@ -306,12 +309,15 @@ export class FeedService {
     this.staticHealth.lastAttemptAt = new Date(this.now()).toISOString();
     this.logger.info?.(`Static GTFS refresh started for ${this.config.feedType}`);
     if (this.estimated) {
-      this.realtimeBuffer = await fetchBuffer(this.fetchImpl, this.config.gtfsRtUrl, {
-        accept: "application/x-protobuf",
-        maxBytes: MAX_REALTIME_BYTES,
-        signal: this.abortController.signal,
-      });
-      const realtimeFeed = FeedMessage.decode(this.realtimeBuffer);
+      let realtimeFeed = this.realtimeFeed;
+      if (!realtimeFeed) {
+        this.realtimeBuffer = await fetchBuffer(this.fetchImpl, this.config.gtfsRtUrl, {
+          accept: "application/x-protobuf",
+          maxBytes: MAX_REALTIME_BYTES,
+          signal: this.abortController.signal,
+        });
+        realtimeFeed = FeedMessage.decode(this.realtimeBuffer);
+      }
       const tripIds = new Set(realtimeFeed.entity.map(entity => entity.tripUpdate?.trip?.tripId).filter(Boolean));
       const cachePath = this.config.staticCacheDir
         ? join(this.config.staticCacheDir,
@@ -330,12 +336,29 @@ export class FeedService {
       }
       this.logger.info?.(`Static GTFS archive ${download.cached ? "reused from cache" : "downloaded"}`);
       try {
-        this.staticFeed = await buildEstimatedStaticIndex(download.path, { bbox: this.config.bbox, tripIds });
-        const stats = this.staticFeed.stats;
-        this.logger.info?.(
-          `Static GTFS index selected ${stats.selectedTrips} trips, ${stats.selectedStops} stops, ` +
-          `${stats.selectedStopTimes} stop times, ${stats.selectedShapePoints} shape points`,
-        );
+        let missingTripIds = 0;
+        if (this.staticFeed.trips?.size) {
+          for (const tripId of tripIds) {
+            if (!this.staticFeed.trips.has(tripId)) missingTripIds += 1;
+          }
+        }
+        const indexAge = this.staticIndexBuiltAt === null ? Infinity : this.now() - this.staticIndexBuiltAt;
+        const shouldRebuild = !this.staticFeed.trips?.size
+          || !download.cached
+          || (missingTripIds > 0 && indexAge >= this.config.staticIndexRebuildIntervalMs);
+        if (shouldRebuild) {
+          this.staticFeed = await buildEstimatedStaticIndex(download.path, { bbox: this.config.bbox, tripIds });
+          this.staticIndexBuiltAt = this.now();
+          const stats = this.staticFeed.stats;
+          this.logger.info?.(
+            `Static GTFS index selected ${stats.selectedTrips} trips, ${stats.selectedStops} stops, ` +
+            `${stats.selectedStopTimes} stop times, ${stats.selectedShapePoints} shape points`,
+          );
+        } else {
+          this.logger.info?.(
+            `Static GTFS archive unchanged; reusing index (${missingTripIds} realtime trips not indexed yet)`,
+          );
+        }
       } finally {
         if (download.directory) await rm(download.directory, { recursive: true, force: true });
       }
