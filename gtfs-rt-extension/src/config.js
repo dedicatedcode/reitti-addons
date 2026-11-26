@@ -97,6 +97,7 @@ export function loadConfig(env = process.env) {
     estimatedRefreshIntervalMs: numberSetting(env.ESTIMATED_REFRESH_INTERVAL_MS, 15_000, "ESTIMATED_REFRESH_INTERVAL_MS", { integer: true, minimum: 1 }),
     estimatedPositionRefreshIntervalMs: numberSetting(env.ESTIMATED_POSITION_REFRESH_INTERVAL_MS, 15_000, "ESTIMATED_POSITION_REFRESH_INTERVAL_MS", { integer: true, minimum: 1 }),
     staticRefreshIntervalMs: numberSetting(env.STATIC_REFRESH_INTERVAL_MS, staticRefreshDefault, "STATIC_REFRESH_INTERVAL_MS", { integer: true, minimum: 1 }),
+    staticIndexRebuildIntervalMs: numberSetting(env.STATIC_INDEX_REBUILD_INTERVAL_MS, 3_600_000, "STATIC_INDEX_REBUILD_INTERVAL_MS", { integer: true, minimum: 60_000 }),
     staticCacheDir: env.STATIC_CACHE_DIR?.trim() ? resolve(env.STATIC_CACHE_DIR.trim()) : null,
     regions,
     regionShapesMinZoom: numberSetting(env.REGION_SHAPES_MIN_ZOOM, 10, "REGION_SHAPES_MIN_ZOOM", { minimum: 0, maximum: 30 }),

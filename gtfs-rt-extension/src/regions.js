@@ -2,12 +2,14 @@ import { existsSync, readFileSync } from "node:fs";
 import { resolve } from "node:path";
 
 const REGION_ID = /^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$/;
+const CKAN_PACKAGE_ACTION = "/api/3/action/package_show";
 const DEFAULT_REGION_DEFINITIONS = Object.freeze([
   Object.freeze({
     id: "nahsh",
     name: "Schleswig-Holstein / Hamburg",
     bbox: Object.freeze([7.8, 53.3, 11.4, 55.1]),
-    staticUrl: "https://opendata.schleswig-holstein.de/dataset/5e0652d8-7f59-42fc-92ab-a6358f800e1d/resource/f0eff75f-88de-411c-8bdc-0a55bb67d9fd/download/fahrplandaten",
+    staticUrl: "https://opendata.schleswig-holstein.de/api/3/action/package_show?id=5e0652d8-7f59-42fc-92ab-a6358f800e1d",
+    staticResource: "fahrplandaten",
     minZoom: 10,
     priority: 10,
   }),
@@ -65,6 +67,12 @@ function normalizeRegion(definition, index) {
   const enabled = definition.enabled !== false;
   if (!enabled) return null;
   const staticUrl = normalizedUrl(definition.staticUrl, id);
+  const staticResource = definition.staticResource
+    ? String(definition.staticResource).trim()
+    : null;
+  if (staticResource && staticResource.length > 200) {
+    throw new Error(`Region ${id}: staticResource is too long`);
+  }
   const minZoom = normalizedNumber(definition.minZoom, null, "minZoom", id, {
     integer: true,
     minimum: 0,
@@ -97,6 +105,7 @@ function normalizeRegion(definition, index) {
     name,
     bbox,
     staticUrl,
+    staticResource,
     minZoom,
     priority,
     maxStopDistanceMeters,
@@ -122,6 +131,37 @@ function normalizeRegions(value, source) {
     regions.push(region);
   });
   return Object.freeze(regions);
+}
+
+export function isCkanPackageUrl(value) {
+  try {
+    return new URL(value).pathname.endsWith(CKAN_PACKAGE_ACTION);
+  } catch {
+    return false;
+  }
+}
+
+export async function resolveRegionStaticUrl(fetchImpl, region, signal) {
+  if (!isCkanPackageUrl(region.staticUrl)) return region.staticUrl;
+  const response = await fetchImpl(region.staticUrl, {
+    headers: { accept: "application/json", "user-agent": "reitti-gtfs-rt-extension/1.0" },
+    signal: AbortSignal.any([signal, AbortSignal.timeout(30_000)]),
+  });
+  if (!response.ok) {
+    await response.body?.cancel();
+    throw new Error(`Region ${region.id}: could not resolve static feed (HTTP ${response.status})`);
+  }
+  const payload = await response.json();
+  const resources = Array.isArray(payload?.result?.resources) ? payload.result.resources : [];
+  const requested = region.staticResource;
+  const resource = requested
+    ? resources.find(candidate => candidate.state !== "deleted"
+      && (candidate.name === requested || candidate.id === requested))
+    : resources.find(candidate => candidate.state !== "deleted" && candidate.url);
+  if (!resource?.url) {
+    throw new Error(`Region ${region.id}: static resource ${requested || "(first)"} not found in CKAN package`);
+  }
+  return normalizedUrl(resource.url, region.id);
 }
 
 function readRegionFile(path) {

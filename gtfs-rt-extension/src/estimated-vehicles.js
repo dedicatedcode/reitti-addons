@@ -4,6 +4,7 @@ import { parseGtfsTime } from "./estimated-static.js";
 import { delayText, isLongDistanceModel, vehicleModel } from "./vehicle-model.js";
 
 const EARTH_RADIUS_METERS = 6_371_000;
+const ACTIVE_TRIP_WINDOW_SECONDS = 6 * 60 * 60;
 
 function finiteNumber(value) {
   if (value && typeof value === "object" && typeof value.toNumber === "function") value = value.toNumber();
@@ -177,10 +178,33 @@ function scheduleName(value, names) {
   return typeof value === "string" ? value : names[value];
 }
 
-function serviceDay(trip, descriptor, predictedReferenceMs, timezone) {
-  if (/^\d{8}$/.test(descriptor.startDate || "")) {
-    const parsed = DateTime.fromFormat(descriptor.startDate, "yyyyLLdd", { zone: timezone });
-    if (parsed.isValid) return parsed.startOf("day");
+function tripWindow(trip) {
+  if (Number.isFinite(trip.startSeconds) && Number.isFinite(trip.endSeconds)) return trip;
+  let start = null;
+  let end = null;
+  for (const stopTime of trip.stopTimes) {
+    const departure = stopTime.departureSeconds ?? stopTime.arrivalSeconds;
+    const arrival = stopTime.arrivalSeconds ?? stopTime.departureSeconds;
+    if (departure !== null && departure !== undefined) {
+      start = start === null ? departure : Math.min(start, departure);
+    }
+    if (arrival !== null && arrival !== undefined) {
+      end = end === null ? arrival : Math.max(end, arrival);
+    }
+  }
+  trip.startSeconds = start;
+  trip.endSeconds = end;
+  return trip;
+}
+
+function serviceDay(trip, descriptor, predictedReferenceMs, timezone, cache = null) {
+  const startDate = descriptor.startDate;
+  if (/^\d{8}$/.test(startDate || "")) {
+    if (cache?.has(startDate)) return cache.get(startDate);
+    const parsed = DateTime.fromFormat(startDate, "yyyyLLdd", { zone: timezone });
+    const result = parsed.isValid ? parsed.startOf("day") : null;
+    cache?.set(startDate, result);
+    return result;
   }
   const reference = DateTime.fromMillis(predictedReferenceMs, { zone: timezone });
   if (!reference.isValid) return null;
@@ -209,11 +233,17 @@ function eventDelay(event) {
 function predictedStops(trip, tripUpdate, day, index, instanceOffsetSeconds = 0) {
   const updates = tripUpdate.stopTimeUpdate || [];
   const bySequence = new Map();
+  const byStopId = new Map();
   for (const update of updates) {
     const sequence = finiteNumber(update.stopSequence);
-    if (sequence !== null && Number.isInteger(sequence)) bySequence.set(sequence, update);
+    if (sequence !== null && Number.isInteger(sequence) && sequence > 0) {
+      bySequence.set(sequence, update);
+    } else if (update.stopId) {
+      if (!byStopId.has(update.stopId)) byStopId.set(update.stopId, []);
+      byStopId.get(update.stopId).push(update);
+    }
   }
-  const used = new Set();
+  const used = byStopId.size > 0 ? new Set() : null;
   const result = [];
   let inheritedDelayMs = (finiteNumber(tripUpdate.delay) ?? 0) * 1000;
 
@@ -222,10 +252,10 @@ function predictedStops(trip, tripUpdate, day, index, instanceOffsetSeconds = 0)
     if (!stop) continue;
     let update = bySequence.get(staticStop.stopSequence);
     if (update) {
-      used.add(update);
+      used?.add(update);
     } else {
-      update = updates.find(candidate => !candidate.stopSequence
-        && candidate.stopId === staticStop.stopId && !used.has(candidate));
+      const candidates = byStopId.get(staticStop.stopId);
+      update = candidates?.find(candidate => !used.has(candidate));
       if (update) used.add(update);
     }
     if (scheduleName(update?.scheduleRelationship, { 0: "SCHEDULED", 1: "SKIPPED", 2: "NO_DATA" }) === "SKIPPED") continue;
@@ -338,6 +368,7 @@ function estimationContext(feed, index, options, receivedAtMs) {
     index,
     trackState,
     currentTracks: trackState ? new Map() : null,
+    serviceDays: new Map(),
     preparedShapes: index.preparedShapes || (index.preparedShapes = new Map()),
     regionalShapes: options.regionalShapes || null,
     vehicles: [],
@@ -345,7 +376,7 @@ function estimationContext(feed, index, options, receivedAtMs) {
 }
 
 function estimateEntity(entity, context) {
-  const { nowMs, outputTimestamp, staleBeforeMs, agencies, bbox, index, trackState, currentTracks, preparedShapes, regionalShapes } = context;
+  const { nowMs, outputTimestamp, staleBeforeMs, agencies, bbox, index, trackState, currentTracks, serviceDays, preparedShapes, regionalShapes } = context;
   const tripUpdate = entity.tripUpdate;
   const descriptor = tripUpdate?.trip;
   const tripId = descriptor?.tripId;
@@ -364,6 +395,29 @@ function estimateEntity(entity, context) {
   if (!trip) return null;
   const route = index.routes.get(trip.routeId);
   if (agencies.size > 0 && (!route?.agencyId || !agencies.has(route.agencyId))) return null;
+  const entityTimestamp = validTimestamp(tripUpdate.timestamp) || outputTimestamp;
+  if (entityTimestamp * 1000 < staleBeforeMs) return null;
+
+  tripWindow(trip);
+  const firstStop = trip.stopTimes.find(stop => stop.departureSeconds !== null || stop.arrivalSeconds !== null);
+  const templateStart = firstStop ? (firstStop.departureSeconds ?? firstStop.arrivalSeconds) : null;
+  const requestedStart = parseGtfsTime(descriptor.startTime);
+  const instanceOffsetSeconds = requestedStart !== null && templateStart !== null
+    ? requestedStart - templateStart : 0;
+  const hasStartDate = /^\d{8}$/.test(descriptor.startDate || "");
+  const referenceMs = hasStartDate ? nowMs : (realtimeReference(tripUpdate) ?? nowMs);
+  const day = serviceDay(trip, descriptor, referenceMs, index.timezone, serviceDays);
+  if (day && Number.isFinite(trip.startSeconds) && Number.isFinite(trip.endSeconds)) {
+    const dayStartSeconds = day.toMillis() / 1000;
+    const nowSeconds = nowMs / 1000;
+    if (nowSeconds < dayStartSeconds + trip.startSeconds + instanceOffsetSeconds - ACTIVE_TRIP_WINDOW_SECONDS
+      || nowSeconds > dayStartSeconds + trip.endSeconds + instanceOffsetSeconds + ACTIVE_TRIP_WINDOW_SECONDS) return null;
+  }
+  const stops = predictedStops(trip, tripUpdate, day, index, instanceOffsetSeconds);
+  if (stops.length < 2) return null;
+  const segment = currentSegment(stops, nowMs);
+  if (!segment?.next) return null;
+
   const regionalShape = regionalShapes?.get(tripId) || null;
   const shapeKey = regionalShape
     ? `region:${regionalShape.regionId}:${regionalShape.shapeId}`
@@ -381,20 +435,6 @@ function estimateEntity(entity, context) {
   }
   const shape = preparedShapes.get(shapeKey);
   if (!shape) return null;
-  const entityTimestamp = validTimestamp(tripUpdate.timestamp) || outputTimestamp;
-  if (entityTimestamp * 1000 < staleBeforeMs) return null;
-
-  const referenceMs = realtimeReference(tripUpdate) ?? nowMs;
-  const day = serviceDay(trip, descriptor, referenceMs, index.timezone);
-  const firstStop = trip.stopTimes.find(stop => stop.departureSeconds !== null || stop.arrivalSeconds !== null);
-  const templateStart = firstStop ? (firstStop.departureSeconds ?? firstStop.arrivalSeconds) : null;
-  const requestedStart = parseGtfsTime(descriptor.startTime);
-  const instanceOffsetSeconds = requestedStart !== null && templateStart !== null
-    ? requestedStart - templateStart : 0;
-  const stops = predictedStops(trip, tripUpdate, day, index, instanceOffsetSeconds);
-  if (stops.length < 2) return null;
-  const segment = currentSegment(stops, nowMs);
-  if (!segment?.next) return null;
 
   const line = route?.shortName || trip.routeId || "";
   const model = vehicleModel(route?.routeType, line);
