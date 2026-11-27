@@ -142,8 +142,9 @@ function region(overrides = {}) {
   };
 }
 
-test("loads regions on viewport demand and unloads them after the idle timeout", async () => {
+test("keeps regional shapes across idle and reuses the cached match", async () => {
   let now = 1_000_000;
+  let builds = 0;
   const applied = [];
   const removed = [];
   const estimated = {
@@ -164,7 +165,10 @@ test("loads regions on viewport demand and unloads them after the idle timeout",
     now: () => now,
     logger: { info() {}, error() {} },
     downloadStatic: async () => ({ path: "regional.zip", cached: true, directory: null }),
-    buildIndex: async () => buildRegionalShapeIndex(regionalZip(), { bbox: BBOX }),
+    buildIndex: async () => {
+      builds += 1;
+      return buildRegionalShapeIndex(regionalZip(), { bbox: BBOX });
+    },
   });
   service.start();
   service.observeViewport([13.39, 52.49, 13.43, 52.51], 9);
@@ -173,12 +177,61 @@ test("loads regions on viewport demand and unloads them after the idle timeout",
   assert.equal(applied[0].matches.size, 2);
   assert.equal(service.getHealth()["test-region"].status, "ready");
   assert.equal(service.getHealth()["test-region"].matchedTrips, 2);
+  assert.equal(service.getHealth()["test-region"].cached, true);
 
   now += 10_001;
   service.deactivateIdleRegions();
-  assert.deepEqual(removed, ["test-region"]);
+  assert.deepEqual(removed, [], "idle keeps the applied route geometry");
   assert.equal(service.getHealth()["test-region"].status, "idle");
   assert.equal(service.getHealth()["test-region"].active, false);
+  assert.equal(service.getHealth()["test-region"].matchedTrips, 2);
+
+  service.observeViewport([13.39, 52.49, 13.43, 52.51], 9);
+  await waitFor(() => applied.length === 2);
+  assert.equal(applied[1].matches, applied[0].matches, "the cached match is reused");
+  assert.equal(builds, 1, "going idle and returning does not rebuild the index");
+  assert.equal(service.getHealth()["test-region"].status, "ready");
+  assert.equal(service.getHealth()["test-region"].matchedTrips, 2);
+  service.stop();
+});
+
+test("rebuilds an idle region once the cached archive is older than the refresh interval", async () => {
+  let now = 1_000_000;
+  let builds = 0;
+  const applied = [];
+  const estimated = {
+    getStaticIndex: () => nationalIndex(),
+    applyRegionalShapes: (regionId, matches) => {
+      applied.push({ regionId, matches });
+      return matches.size;
+    },
+    removeRegionalShapes() {},
+  };
+  const service = new RegionalShapesService({
+    regions: [region()],
+    regionShapesMinZoom: 9,
+    regionShapesIdleTimeoutMs: 10_000,
+    regionShapesRefreshIntervalMs: 60_000,
+    staticCacheDir: null,
+  }, estimated, {
+    now: () => now,
+    logger: { info() {}, error() {} },
+    downloadStatic: async () => ({ path: "regional.zip", cached: true, directory: null }),
+    buildIndex: async () => {
+      builds += 1;
+      return buildRegionalShapeIndex(regionalZip(), { bbox: BBOX });
+    },
+  });
+  service.start();
+  service.observeViewport([13.39, 52.49, 13.43, 52.51], 9);
+  await waitFor(() => applied.length === 1);
+
+  now += 10_001;
+  service.deactivateIdleRegions();
+  now += 60_000;
+  service.observeViewport([13.39, 52.49, 13.43, 52.51], 9);
+  await waitFor(() => builds === 2);
+  assert.equal(service.getHealth()["test-region"].status, "ready");
   service.stop();
 });
 

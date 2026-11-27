@@ -358,6 +358,7 @@ export class RegionalShapesService {
     }]));
     this.lastDemand = new Map();
     this.controllers = new Map();
+    this.results = new Map();
     this.idleTimer = null;
     this.started = false;
   }
@@ -376,6 +377,7 @@ export class RegionalShapesService {
     this.idleTimer = null;
     for (const controller of this.controllers.values()) controller.abort();
     this.controllers.clear();
+    this.results.clear();
     for (const region of this.regions) {
       this.estimated.removeRegionalShapes?.(region.id, { refresh: false });
     }
@@ -394,8 +396,51 @@ export class RegionalShapesService {
   ensureRegion(region) {
     const state = this.states.get(region.id);
     if (!state || state.status === "loading" || state.status === "ready") return;
+    const cached = this.usableResult(region);
+    if (cached) {
+      this.applyCachedResult(region, cached);
+      return;
+    }
     if (state.status === "error" && this.now() < state.nextRetryAt) return;
     void this.loadRegion(region);
+  }
+
+  archiveMtimeMs(path) {
+    try {
+      return path ? statSync(path).mtimeMs : null;
+    } catch {
+      return null;
+    }
+  }
+
+  usableResult(region) {
+    const cached = this.results.get(region.id);
+    if (!cached) return null;
+    const maxAge = this.config.regionShapesRefreshIntervalMs;
+    const cachePath = this.regionCachePath(region);
+    if (cachePath) {
+      const mtimeMs = this.archiveMtimeMs(cachePath);
+      if (mtimeMs === null || cached.archiveMtimeMs !== mtimeMs) return null;
+    }
+    if (this.now() - cached.loadedAt >= maxAge) return null;
+    return cached;
+  }
+
+  applyCachedResult(region, cached) {
+    const state = this.states.get(region.id);
+    if (!state) return;
+    const appliedTrips = this.estimated.applyRegionalShapes(region.id, cached.matches, {
+      priority: region.priority,
+    });
+    cached.appliedTrips = appliedTrips;
+    state.status = "ready";
+    state.active = true;
+    state.matchedTrips = appliedTrips;
+    state.totalTrips = cached.consideredTrips;
+    state.shapePoints = cached.shapePoints;
+    state.lastLoadedAt = new Date(cached.loadedAt).toISOString();
+    state.lastError = null;
+    this.logger.info?.(`Regional shapes ${region.id} reused cached matches (${appliedTrips} trips)`);
   }
 
   async loadRegion(region) {
@@ -432,6 +477,14 @@ export class RegionalShapesService {
       }
       if (controller.signal.aborted || !this.started) return;
       const appliedTrips = this.estimated.applyRegionalShapes(region.id, result.matches, { priority: region.priority });
+      this.results.set(region.id, {
+        matches: result.matches,
+        appliedTrips,
+        consideredTrips: result.stats.consideredTrips,
+        shapePoints: result.stats.shapePoints,
+        loadedAt: this.now(),
+        archiveMtimeMs: this.archiveMtimeMs(download.path),
+      });
       state.status = "ready";
       state.active = true;
       state.matchedTrips = appliedTrips;
@@ -506,15 +559,15 @@ export class RegionalShapesService {
       const controller = this.controllers.get(region.id);
       const wasLoading = state.status === "loading";
       controller?.abort();
-      this.estimated.removeRegionalShapes?.(region.id);
+      const cached = this.results.get(region.id);
       state.status = "idle";
       state.active = false;
-      state.matchedTrips = 0;
-      state.totalTrips = 0;
-      state.shapePoints = 0;
+      state.matchedTrips = cached?.appliedTrips ?? 0;
+      state.totalTrips = cached?.consideredTrips ?? 0;
+      state.shapePoints = cached?.shapePoints ?? 0;
       this.lastDemand.delete(region.id);
       this.logger.info?.(
-        `Regional shapes ${region.id} ${wasLoading ? "cancelled" : "unloaded"} after idle timeout`,
+        `Regional shapes ${region.id} ${wasLoading ? "cancelled" : "idle; keeping cached route geometry"}`,
       );
     }
   }
@@ -526,6 +579,7 @@ export class RegionalShapesService {
       regions[region.id] = {
         status: state.status,
         active: state.active,
+        cached: this.results.has(region.id),
         matchedTrips: state.matchedTrips,
         totalTrips: state.totalTrips,
         shapePoints: state.shapePoints,

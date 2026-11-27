@@ -190,6 +190,15 @@ test("applies and removes regional shapes through the estimated service", async 
   assert.ok(shaped.lat > 52.5001);
   assert.equal(service.regionalShapes.size, 1);
 
+  const tracksBefore = [...service.estimatedTracks.entries()];
+  assert.ok(tracksBefore.length > 0);
+  service.applyRegionalShapes("test-region", new Map([[
+    "t-no-shape",
+    { shapeId: "region-shape", points },
+  ]]));
+  assert.deepEqual([...service.estimatedTracks.entries()], tracksBefore,
+    "reapplying identical matches keeps track continuity");
+
   service.removeRegionalShapes("test-region");
   assert.equal(service.regionalShapes.size, 0);
   await service.refreshEstimate();

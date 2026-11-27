@@ -397,17 +397,34 @@ export class FeedService {
   }
 
   applyRegionalShapes(regionId, matches, { priority = 0 } = {}) {
-    this.removeRegionalShapes(regionId, { refresh: false });
+    const previous = new Map();
+    for (const [tripId, value] of this.regionalShapes) {
+      if (value.regionId === regionId) previous.set(tripId, value);
+    }
     const affected = new Set();
+    const applied = new Set();
     for (const [tripId, match] of matches) {
       const existing = this.regionalShapes.get(tripId);
-      if (existing && existing.priority > priority) continue;
-      this.regionalShapes.set(tripId, { regionId, priority, ...match });
-      affected.add(tripId);
+      if (existing && existing.regionId !== regionId && existing.priority > priority) continue;
+      applied.add(tripId);
+      if (!existing || existing.regionId !== regionId || existing.shapeId !== match.shapeId) {
+        this.regionalShapes.set(tripId, { regionId, priority, ...match });
+        affected.add(tripId);
+      } else if (existing.priority !== priority) {
+        existing.priority = priority;
+      }
+    }
+    for (const tripId of previous.keys()) {
+      if (applied.has(tripId)) continue;
+      const current = this.regionalShapes.get(tripId);
+      if (current?.regionId === regionId) {
+        this.regionalShapes.delete(tripId);
+        affected.add(tripId);
+      }
     }
     this.invalidateRegionalShapes(affected, regionId);
-    void this.refreshEstimate();
-    return affected.size;
+    if (affected.size > 0) void this.refreshEstimate();
+    return applied.size;
   }
 
   removeRegionalShapes(regionId, { refresh = true } = {}) {
