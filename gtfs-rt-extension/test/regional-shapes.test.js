@@ -230,8 +230,10 @@ test("rebuilds an idle region once the cached archive is older than the refresh 
   service.deactivateIdleRegions();
   now += 60_000;
   service.observeViewport([13.39, 52.49, 13.43, 52.51], 9);
-  await waitFor(() => builds === 2);
-  assert.equal(service.getHealth()["test-region"].status, "ready");
+  await waitFor(() => builds === 2
+    && applied.length === 2
+    && service.getHealth()["test-region"].status === "ready");
+  assert.equal(builds, 2);
   service.stop();
 });
 
