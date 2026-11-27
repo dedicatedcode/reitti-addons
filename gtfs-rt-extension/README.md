@@ -191,7 +191,7 @@ differs.
 | `STATIC_CACHE_DIR`                      | `data/gtfs-static` | Static ZIP cache directory, resolved against the working directory (`/app/data/gtfs-static` in the image). Mount this path to keep the archive between container recreations. |
 | `REGIONS_FILE`                          | `regions.json`   | Optional regional shapes registry. Relative paths resolve against the working directory. The image bakes `/app/regions.json`. |
 | `REGION_SHAPES_MIN_ZOOM`                | `10`             | Minimum zoom that activates a regional shapes feed. Regions may override this with their own `minZoom`. |
-| `REGION_SHAPES_IDLE_TIMEOUT_MS`         | `600000`         | Unload regional shapes after this many milliseconds without an intersecting `/vehicles` request. |
+| `REGION_SHAPES_IDLE_TIMEOUT_MS`         | `86400000`       | Mark regional shapes idle after this many milliseconds without an intersecting `/vehicles` request. Matched geometry stays applied in memory; going idle only stops demand tracking and reloading. |
 | `REGION_SHAPES_REFRESH_INTERVAL_MS`     | `86400000`       | Maximum age of a cached regional ZIP before it is revalidated on the next activation. |
 | `EXTENSION_API_KEY`                     | unset            | When set, manifest and vehicle requests require `Authorization: Bearer <key>`. Health, the SVG, and the GLB models stay public. |
 
@@ -219,7 +219,8 @@ modes.
   region you actually view, or raising `ESTIMATED_POSITION_REFRESH_INTERVAL_MS`, reduces CPU and improves update
   latency. Reitti interpolates between updates, so 20–30 seconds is still smooth.
 - Regional feeds with `shapes.txt` are loaded on demand. Until a region is ready, vehicles keep the straight-line
-  fallback. Once ready, matched trips switch to real route geometry.
+  fallback. Once ready, matched trips switch to real route geometry and keep it for the lifetime of the process, even
+  after the region goes idle.
 
 `/health` always reports idle cities as `"status": "idle", "active": false` and does not activate them. The overall
 status ignores idle sources.
@@ -236,9 +237,11 @@ regional feed:
 4. Matched trips switch to the regional shape on the next position refresh.
 5. Unmatched trips keep the straight-line fallback.
 
-Regional feeds require a concrete `bbox` and `zoom`; a request without a viewport never loads every region. Shapes
-are unloaded after `REGION_SHAPES_IDLE_TIMEOUT_MS` without demand. The downloaded ZIP stays in the static cache and is
-reused on the next visit.
+Regional feeds require a concrete `bbox` and `zoom`; a request without a viewport never loads every region. After
+`REGION_SHAPES_IDLE_TIMEOUT_MS` without demand, a region goes idle: demand tracking stops, but the matched route
+geometry stays applied in memory, so returning to the region does not fall back to straight lines or rebuild the
+match. The matched result is reused directly on the next visit. The downloaded ZIP stays in the static cache and is
+reused after a restart.
 
 The baked `regions.json` starts with the NAH.SH feed for Schleswig-Holstein and Hamburg, which covers Lübeck. Add more
 regions by editing or mounting `/app/regions.json`:

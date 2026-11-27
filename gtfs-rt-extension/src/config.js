@@ -101,7 +101,7 @@ export function loadConfig(env = process.env) {
     staticCacheDir: env.STATIC_CACHE_DIR?.trim() ? resolve(env.STATIC_CACHE_DIR.trim()) : null,
     regions,
     regionShapesMinZoom: numberSetting(env.REGION_SHAPES_MIN_ZOOM, 10, "REGION_SHAPES_MIN_ZOOM", { minimum: 0, maximum: 30 }),
-    regionShapesIdleTimeoutMs: numberSetting(env.REGION_SHAPES_IDLE_TIMEOUT_MS, 600_000, "REGION_SHAPES_IDLE_TIMEOUT_MS", { integer: true, minimum: 1 }),
+    regionShapesIdleTimeoutMs: numberSetting(env.REGION_SHAPES_IDLE_TIMEOUT_MS, 86_400_000, "REGION_SHAPES_IDLE_TIMEOUT_MS", { integer: true, minimum: 1 }),
     regionShapesRefreshIntervalMs: numberSetting(env.REGION_SHAPES_REFRESH_INTERVAL_MS, 86_400_000, "REGION_SHAPES_REFRESH_INTERVAL_MS", { integer: true, minimum: 1 }),
     extensionApiKey: env.EXTENSION_API_KEY?.trim() || null,
   });
