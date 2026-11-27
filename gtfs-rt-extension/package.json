@@ -1,6 +1,6 @@
 {
   "name": "reitti-gtfs-rt-extension",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "Standalone GTFS-RT vehicle-position extension for Reitti",
   "private": true,
   "type": "module",
